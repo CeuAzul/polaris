@@ -154,8 +154,6 @@ You should see in the Serial Monitor (115200 baud) the line `ID:THRUST_RIG_V2` c
 
 For comparison with reference data, download files from the [UIUC Propeller Database](https://m-selig.ae.illinois.edu/props/propDB.html) and place the `*_static_*.txt` files in the `uiuc_data/` folder.
 
-For propellers similar to the EOLO 16×8, use `apce_16x8_static_*.txt` (APC Thin Electric 16×8E) as reference.
-
 ### Run the application
 
 ```bash
@@ -231,8 +229,8 @@ Each calibration receives a **SHA-1 ID hash** that is permanently recorded in ev
 
 1. Click **▶ Novo Ensaio**
 2. Fill in the metadata dialog:
-   - **Propeller**: pick a preset (e.g., "EOLO 16x8") or enter manually
-   - **Motor**: pick a preset (e.g., "SunnySky X4120 KV480") — pole pairs default to 7
+   - **Propeller**: pick a preset or enter manually
+   - **Motor**: pick a preset — pole pairs default to 7
    - **Battery**: cells, capacity (mAh), initial voltage
    - **Ambient conditions**: temperature, pressure, humidity → click **Calcular rho** to compute air density (CIPM-2007 formula)
    - **Operator** and notes
@@ -494,7 +492,7 @@ MIT License — see [LICENSE](LICENSE) file for details.
 
 <p align="center">
   <i>POLARIS</i><br>
-  <b>Céu Azul Aeronaves · Advanced2026</b>
-  <b>Made by @higor0227 and @joaoheck </b>
+  <b>Céu Azul Aeronaves · Advanced 2026</b>
+  <b>Made by [@higor0227](https://github.com/higor0227) and [@joaoheck](https://github.com/joaoheck) </b>
 
 </p>
