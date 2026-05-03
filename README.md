@@ -107,11 +107,7 @@ Arduino Nano               ESC                       Battery
 
 The bench uses an aluminum profile structure with a sliding carriage that pulls a horizontally mounted thrust load cell via a threaded rod. The motor mount is connected to a torque arm whose force is captured by the second load cell. The default torque arm length is 7 cm (configurable in `config.py`).
 
-> 📷 **TODO**: Add photos of the assembled bench in `docs/photos/` and reference them here:
-> ```markdown
-> ![Bench overview](docs/photos/bench_overview.jpg)
-> ![Wiring detail](docs/photos/wiring.jpg)
-> ```
+[Bench overview](docs/photos/bench_overview.jpeg)
 
 ---
 
