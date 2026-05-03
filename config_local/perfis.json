@@ -1,0 +1,45 @@
+{
+  "motores": {
+    "SunnySky X4120 KV480": {
+      "modelo": "SunnySky X4120",
+      "kv": 480,
+      "pares_polos": 7
+    },
+    "SunnySky X4120 KV550": {
+      "modelo": "SunnySky X4120",
+      "kv": 550,
+      "pares_polos": 7
+    },
+    "SunnySky X4120 KV650": {
+      "modelo": "SunnySky X4120",
+      "kv": 650,
+      "pares_polos": 7
+    }
+  },
+  "helices": {
+    "EOLO 16x8": {
+      "fabricante": "SunnySky/EOLO",
+      "modelo": "EOLO",
+      "diametro_in": 16.0,
+      "passo_in": 8.0
+    },
+    "EOLO 15x8": {
+      "fabricante": "SunnySky/EOLO",
+      "modelo": "EOLO",
+      "diametro_in": 15.0,
+      "passo_in": 8.0
+    },
+    "APC 16x8E": {
+      "fabricante": "APC",
+      "modelo": "Thin Electric",
+      "diametro_in": 16.0,
+      "passo_in": 8.0
+    },
+    "APC 15x8E": {
+      "fabricante": "APC",
+      "modelo": "Thin Electric",
+      "diametro_in": 15.0,
+      "passo_in": 8.0
+    }
+  }
+}
