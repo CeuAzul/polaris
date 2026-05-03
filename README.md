@@ -79,9 +79,9 @@ The system was designed around three principles:
 | Thrust load cell | 10 kg with HX711 | DT=D3, SCK=D4 |
 | Torque load cell | 5 kg with HX711 | DT=D5, SCK=D6 |
 | RPM sensor | ESC yellow signal wire | D7 (PCINT23) |
-| Motor | SunnySky X4120 KV480 | 14 poles = 7 pole pairs |
-| ESC | Hobbywing Platinum 120A V4 | RPM signal output via yellow wire |
-| Propeller | EOLO 16×8 (or any) | Configurable in test metadata |
+| Motor | Any | 14 poles = 7 pole pairs |
+| ESC | Hobbywing Platinum V4 | RPM signal output via yellow wire |
+| Propeller | Any | Configurable in test metadata |
 
 ### Wiring Diagram
 
