@@ -493,6 +493,8 @@ MIT License — see [LICENSE](LICENSE) file for details.
 <p align="center">
   <i>POLARIS</i><br>
   <b>Céu Azul Aeronaves · Advanced 2026</b>
-  <b>Made by [@higor0227](https://github.com/higor0227) and [@joaoheck](https://github.com/joaoheck) </b>
-
+  Made by <a href="https://github.com/higor0227">@higor0227</a> and <a href="https://github.com/joaoheck">@joaoheck</a>
 </p>
+
+
+ 
