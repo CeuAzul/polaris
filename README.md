@@ -2,7 +2,7 @@
 
 **P**ropeller **O**bservation, **L**ogging, **A**cquisition and **R**otation **I**nstrumentation **S**tand
 
-> Static thrust test rig developed by **Céu Azul Aerodesign** team for characterization of propellers used in SAE Brasil Aerodesign competition aircraft.
+> Static thrust test rig developed by **Céu Azul Aeronaves** team for characterization of propellers used in SAE Brasil Aerodesign competition aircraft, on Advanced class.
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Arduino](https://img.shields.io/badge/Arduino-Nano-00979D.svg)](https://www.arduino.cc/)
