@@ -485,7 +485,7 @@ MIT License — see [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
 
-- **Céu Azul Aerodesign** team (UFSC, Brazil) for the bench design and testing
+- **Céu Azul Aeronaves** team (UFSC, Brasil) for the bench design and testing
 - **University of Illinois at Urbana-Champaign** for the publicly available [Propeller Database](https://m-selig.ae.illinois.edu/props/propDB.html)
 
 ---
