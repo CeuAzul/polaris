@@ -117,7 +117,6 @@ The bench uses an aluminum profile structure with a sliding carriage that pulls 
 
 - **Python 3.10 or newer** (tested on 3.10–3.13)
 - **Arduino IDE** (1.8 or 2.x) for firmware upload
-- **CH340 USB driver** for clone Arduino Nano boards ([download here](https://www.wch-ic.com/downloads/CH341SER_EXE.html))
 
 ### Software setup
 
