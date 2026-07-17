@@ -11,6 +11,7 @@ BRACO_TORQUE_M = BRACO_TORQUE_CM / 100.0
 
 # Serial
 DEFAULT_BAUDRATE = 115200
+BAUDRATE_BATERIA = 9600            # Arduino do monitor de bateria (bancada_bateria_v4)
 ID_FIRMWARE_V2 = "THRUST_RIG_V2"   # legado (sem Pitot)
 ID_FIRMWARE_V3 = "THRUST_RIG_V3"   # atual (com Pitot)
 ID_FIRMWARE = ID_FIRMWARE_V3

@@ -30,6 +30,7 @@ from core.pitot import (
     PITOT_OK, PITOT_AUSENTE, status_legivel, calcular_tara,
     salvar_pitot_cal,
 )
+from core.battery_reader import BAT_IDADE_MAX_S, MAX_CELULAS
 from .dialogo_metadados import DialogoMetadados
 
 
@@ -51,6 +52,11 @@ class AbaColeta(ttk.Frame):
         self.plot_buffer = deque(maxlen=10000)
         self._ultimo_alerta_anomalia = ""
         self._pitot_visto = False  # firmware mandou status != AUSENTE alguma vez
+
+        # ultima leitura da bateria (hold-last-value): (v_celulas[6], v_total)
+        self._bat_v_cels = [0.0] * MAX_CELULAS
+        self._bat_v_total = 0.0
+        self._bat_fresca = False   # leitura recente (< BAT_IDADE_MAX_S)
 
         self._build()
 
@@ -89,6 +95,26 @@ class AbaColeta(ttk.Frame):
         # Indicador de calibracao
         self.lbl_cal = ttk.Label(top, text="Cal: —", foreground="grey")
         self.lbl_cal.pack(side="right", padx=8)
+
+        # ----- Segundo Arduino: monitor de bateria -----
+        topbat = ttk.Frame(self); topbat.pack(fill="x", padx=5, pady=(0, 4))
+
+        ttk.Label(topbat, text="Bateria — Porta:").pack(side="left")
+        self.cb_porta_bat = ttk.Combobox(topbat, width=12, values=self.app.listar_portas())
+        self.cb_porta_bat.pack(side="left", padx=2)
+
+        ttk.Label(topbat, text="Celulas:").pack(side="left", padx=(8, 2))
+        self.var_n_cel = tk.IntVar(value=6)
+        self.spin_n_cel = ttk.Spinbox(topbat, from_=1, to=MAX_CELULAS,
+                                      textvariable=self.var_n_cel, width=4)
+        self.spin_n_cel.pack(side="left")
+
+        self.btn_conectar_bat = ttk.Button(topbat, text="Conectar Bateria",
+                                           command=self._toggle_conexao_bat)
+        self.btn_conectar_bat.pack(side="left", padx=10)
+        self.lbl_status_bat = ttk.Label(topbat, text="Bateria: desconectada",
+                                        foreground="grey")
+        self.lbl_status_bat.pack(side="left", padx=5)
 
         # ----- Filtros e regime estavel -----
         mid = ttk.LabelFrame(self, text="Filtros / Detector de regime estavel")
@@ -180,8 +206,19 @@ class AbaColeta(ttk.Frame):
         ttk.Label(ind, text="eta:").grid(row=2, column=7, padx=8, sticky="e")
         ttk.Label(ind, textvariable=self.var_eta, font=("TkDefaultFont", 11), foreground="#5050b0").grid(row=2, column=8, sticky="w")
 
+        # linha 3: bateria (segundo Arduino - so mostra valores quando conectado)
+        self.var_vbat = tk.StringVar(value="-- V")
+        self.var_vcels = tk.StringVar(value="--")
+
+        ttk.Label(ind, text="V bat:").grid(row=3, column=0, padx=4, sticky="e")
+        ttk.Label(ind, textvariable=self.var_vbat, font=big, foreground="#7a3aa0").grid(row=3, column=1, sticky="w")
+
+        ttk.Label(ind, text="Celulas:").grid(row=3, column=3, padx=8, sticky="e")
+        ttk.Label(ind, textvariable=self.var_vcels, font=("TkDefaultFont", 11),
+                  foreground="#7a3aa0").grid(row=3, column=4, columnspan=5, sticky="w")
+
         self.lbl_anomalia = ttk.Label(ind, text="", foreground="orange", font=("TkDefaultFont", 10, "bold"))
-        self.lbl_anomalia.grid(row=3, column=0, columnspan=9, sticky="w", padx=4, pady=(4, 0))
+        self.lbl_anomalia.grid(row=4, column=0, columnspan=9, sticky="w", padx=4, pady=(4, 0))
 
         # ----- Plot -----
         plot_frame = ttk.Frame(self); plot_frame.pack(fill="both", expand=True, padx=5, pady=4)
@@ -247,7 +284,9 @@ class AbaColeta(ttk.Frame):
     # CONEXAO
     # ----------------------------------------------------
     def _refresh_portas(self):
-        self.cb_porta["values"] = self.app.listar_portas()
+        portas = self.app.listar_portas()
+        self.cb_porta["values"] = portas
+        self.cb_porta_bat["values"] = portas
 
     def _toggle_conexao(self):
         if self.app.reader and self.app.reader.connected:
@@ -265,6 +304,36 @@ class AbaColeta(ttk.Frame):
                 self.lbl_status.config(text=f"Conectado ({porta})", foreground="green")
             else:
                 messagebox.showerror("Conexao", msg)
+
+    def _toggle_conexao_bat(self):
+        if self.app.bat_reader and self.app.bat_reader.connected:
+            self.app.desconectar_bateria()
+            self.btn_conectar_bat.config(text="Conectar Bateria")
+            self.lbl_status_bat.config(text="Bateria: desconectada", foreground="grey")
+            self.spin_n_cel.config(state="normal")
+            self._bat_fresca = False
+            self.var_vbat.set("-- V")
+            self.var_vcels.set("--")
+            return
+
+        porta = self.cb_porta_bat.get()
+        if not porta:
+            messagebox.showwarning("Bateria", "Selecione a porta do Arduino da bateria.")
+            return
+        if self.cb_porta.get() == porta and self.app.reader and self.app.reader.connected:
+            messagebox.showwarning("Bateria",
+                                   "Esta porta ja esta em uso pela bancada.\n"
+                                   "Selecione a porta do segundo Arduino.")
+            return
+        ok, msg = self.app.conectar_bateria(porta, int(self.var_n_cel.get()))
+        if ok:
+            self.btn_conectar_bat.config(text="Desconectar Bateria")
+            self.lbl_status_bat.config(
+                text=f"Bateria: conectada ({porta}, {int(self.var_n_cel.get())}S) — aguardando dados...",
+                foreground="green")
+            self.spin_n_cel.config(state="disabled")
+        else:
+            messagebox.showerror("Bateria", msg)
 
     def atualizar_status_calibracao(self):
         emp = self.app.cal.empuxo
@@ -465,6 +534,10 @@ class AbaColeta(ttk.Frame):
             f.write(f"# pitot_k_corr: {self.app.pitot_cal.k_corr:.6f}\n")
             f.write(f"# cal_id: {cal_id}\n")
             f.write(f"# braco_torque_m: {BRACO_TORQUE_M}\n")
+            bat_conectada = bool(self.app.bat_reader and self.app.bat_reader.connected)
+            bat_n_cel = self.app.bat_reader.n_celulas if bat_conectada else 0
+            f.write(f"# bateria_monitor: {'sim' if bat_conectada else 'nao'}\n")
+            f.write(f"# bateria_n_celulas: {bat_n_cel}\n")
             for t_e, lab in self.eventos_marcados:
                 f.write(f"# evento: t={t_e:.3f} {lab}\n")
             f.write("#\n")
@@ -480,7 +553,8 @@ class AbaColeta(ttk.Frame):
                 "p_mec_W", "T_por_P_g_por_W",
                 "C_T", "C_P", "FOM", "J", "eta",
                 "estavel", "braco_m", "rho", "D_m",
-            ]
+                "v_bat_total",
+            ] + [f"v_cel{i+1}" for i in range(MAX_CELULAS)]
             w.writerow(cabecalho)
             for d in self.dados_coleta:
                 w.writerow([
@@ -494,7 +568,8 @@ class AbaColeta(ttk.Frame):
                     f"{d['C_T']:.5f}", f"{d['C_P']:.5f}", f"{d['FOM']:.4f}",
                     f"{d.get('J', 0.0):.5f}", f"{d.get('eta', 0.0):.4f}",
                     int(d["estavel"]), BRACO_TORQUE_M, rho, D_m,
-                ])
+                    f"{d.get('v_bat', 0.0):.2f}",
+                ] + [f"{v:.2f}" for v in d.get("v_cels", [0.0] * MAX_CELULAS)])
 
         # Salva metadados em JSON paralelo
         json_path = Path(path).with_suffix(".json")
@@ -509,6 +584,12 @@ class AbaColeta(ttk.Frame):
                     "raw_offset": self.app.pitot_cal.raw_offset,
                     "pa_per_count": self.app.pitot_cal.pa_per_count,
                     "k_corr": self.app.pitot_cal.k_corr,
+                },
+                "bateria_monitor": {
+                    "conectado": bool(self.app.bat_reader and self.app.bat_reader.connected),
+                    "n_celulas": (self.app.bat_reader.n_celulas
+                                  if self.app.bat_reader and self.app.bat_reader.connected
+                                  else 0),
                 },
                 "eventos": self.eventos_marcados,
                 "n_amostras": len(self.dados_coleta),
@@ -531,8 +612,48 @@ class AbaColeta(ttk.Frame):
         self.detector = StableDetector(janela_s=self.var_jan.get(),
                                        limiar_g=self.var_lim.get())
 
+    def _atualizar_bateria(self):
+        """Le a ultima leitura do Arduino da bateria e atualiza indicadores.
+
+        Roda independente da bancada principal (portas separadas).
+        Os valores ficam guardados em self._bat_* e sao anexados a cada
+        amostra da bancada (hold-last-value, bateria atualiza a 1 Hz).
+        """
+        br = self.app.bat_reader
+        if not (br and br.connected):
+            return
+
+        snap = br.snapshot()
+        if snap is None:
+            return  # conectado mas nenhuma linha valida ainda
+
+        v_cels, v_total, idade = snap
+        self._bat_v_cels = v_cels
+        self._bat_v_total = v_total
+        self._bat_fresca = idade < BAT_IDADE_MAX_S
+
+        n_cel = br.n_celulas
+        if self._bat_fresca:
+            self.var_vbat.set(f"{v_total:5.2f} V")
+            self.var_vcels.set("  ".join(f"{v:.2f}" for v in v_cels[:n_cel]))
+            # alerta simples de celula baixa (LiPo: 3.5V ja e conservador)
+            if any(0.1 < v < 3.5 for v in v_cels[:n_cel]):
+                self.lbl_status_bat.config(
+                    text=f"Bateria: CELULA BAIXA! ({br.port}, {n_cel}S)",
+                    foreground="red")
+            else:
+                self.lbl_status_bat.config(
+                    text=f"Bateria: ok ({br.port}, {n_cel}S)",
+                    foreground="green")
+        else:
+            self.lbl_status_bat.config(
+                text=f"Bateria: sem dados ha {idade:.0f}s ({br.port})",
+                foreground="orange")
+
     def update_loop(self):
         """Drena a fila do reader e atualiza tudo. Chamado ~a cada 100ms pela App."""
+        self._atualizar_bateria()
+
         if not (self.app.reader and self.app.reader.connected):
             return
 
@@ -621,6 +742,10 @@ class AbaColeta(ttk.Frame):
                     "C_T": coefs["C_T"], "C_P": coefs["C_P"], "FOM": coefs["FOM"],
                     "J": coefs["J"], "eta": coefs["eta"],
                     "estavel": estavel,
+                    # bateria: ultima leitura conhecida (0.0 se nao conectada)
+                    "v_bat": self._bat_v_total if self._bat_fresca else 0.0,
+                    "v_cels": (list(self._bat_v_cels) if self._bat_fresca
+                               else [0.0] * MAX_CELULAS),
                 })
                 if len(self.dados_coleta) > SAMPLE_BUFFER_MAX:
                     self.dados_coleta = self.dados_coleta[-SAMPLE_BUFFER_MAX:]

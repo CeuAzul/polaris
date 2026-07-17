@@ -14,11 +14,12 @@ import serial.tools.list_ports
 
 from config import (
     ARQUIVO_CALIBRACAO, ARQUIVO_PITOT_CAL, ARQUIVO_BANCO,
-    DEFAULT_BAUDRATE, PORTA_REMOTA_PADRAO,
+    DEFAULT_BAUDRATE, BAUDRATE_BATERIA, PORTA_REMOTA_PADRAO,
 )
 from core.calibration import Calibration
 from core.pitot import carregar_pitot_cal
 from core.serial_reader import SerialReader
+from core.battery_reader import BatteryReader
 from core import database
 from core.remote_server import RemoteServer
 
@@ -40,6 +41,7 @@ class App:
         self.pitot_cal_path = ARQUIVO_PITOT_CAL
         self.pitot_cal = carregar_pitot_cal(self.pitot_cal_path)
         self.reader = None
+        self.bat_reader = None
         self.remote_server = None
 
         # Banco
@@ -114,6 +116,36 @@ class App:
             self.tab_coleta._parar_coleta()
         self.tab_coleta.lbl_status.config(text="Desconectado", foreground="red")
         self.tab_coleta.btn_conectar.config(text="Conectar")
+
+    # ----------------------------------------------------
+    # SERIAL - Arduino da bateria (segundo Arduino, porta propria)
+    # ----------------------------------------------------
+    def conectar_bateria(self, porta, n_celulas):
+        if self.bat_reader and self.bat_reader.connected:
+            return False, "Bateria ja conectada."
+        self.bat_reader = BatteryReader(porta, n_celulas, BAUDRATE_BATERIA)
+        self.bat_reader.start()
+        # espera o thread abrir a porta (inclui ~2.5s do reset do Arduino)
+        import time
+        for _ in range(60):
+            time.sleep(0.1)
+            if self.bat_reader.connected:
+                return True, "OK"
+            if self.bat_reader.last_error:
+                err = self.bat_reader.last_error
+                self.bat_reader = None
+                return False, err
+        if self.bat_reader and self.bat_reader.last_error:
+            err = self.bat_reader.last_error
+            self.bat_reader = None
+            return False, err
+        return False, "timeout"
+
+    def desconectar_bateria(self):
+        if self.bat_reader:
+            self.bat_reader.stop()
+            self.bat_reader.join(timeout=2)
+            self.bat_reader = None
 
     # ----------------------------------------------------
     # Banco
@@ -245,6 +277,8 @@ class App:
                     return
             if self.reader:
                 self.reader.stop()
+            if self.bat_reader:
+                self.bat_reader.stop()
             if self.remote_server:
                 self.remote_server.stop()
         except Exception:
