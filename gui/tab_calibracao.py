@@ -1,6 +1,7 @@
-"""Aba de Calibracao multipontos."""
+"""Aba de Calibracao multipontos (celulas + Pitot)."""
 import queue
 import time
+from datetime import datetime
 
 import numpy as np
 import tkinter as tk
@@ -12,6 +13,20 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 from core.calibration import calibrar
+from core.pitot import (
+    PITOT_OK, PITOT_AUSENTE, MS4525_PA_PER_COUNT_DEFAULT,
+    MS4525_RANGE_PA_DEFAULT, calcular_tara, salvar_pitot_cal,
+    status_legivel,
+)
+
+
+# Presets de sensores (range_pa, pa_per_count)
+SENSOR_PRESETS = {
+    "MS4525DO-DS3BI001DP (+/-1psi, B)": (MS4525_RANGE_PA_DEFAULT,
+                                         2.0 * MS4525_RANGE_PA_DEFAULT / (15565.0 - 819.0)),
+    "MS4525DO-DS3AI001DP (+/-1psi, A)": (MS4525_RANGE_PA_DEFAULT,
+                                         2.0 * MS4525_RANGE_PA_DEFAULT / (14746.0 - 1638.0)),
+}
 
 
 class AbaCalibracao(ttk.Frame):
@@ -22,8 +37,21 @@ class AbaCalibracao(ttk.Frame):
         self._build()
 
     def _build(self):
-        # Topo
-        top = ttk.Frame(self); top.pack(fill="x", padx=5, pady=4)
+        nb = ttk.Notebook(self); nb.pack(fill="both", expand=True, padx=5, pady=4)
+
+        # Sub-aba 1: Celulas (empuxo/torque) - codigo original
+        f_cel = ttk.Frame(nb); nb.add(f_cel, text="Celulas (empuxo/torque)")
+        self._build_celulas(f_cel)
+
+        # Sub-aba 2: Pitot
+        f_pit = ttk.Frame(nb); nb.add(f_pit, text="Pitot (MS4525DO)")
+        self._build_pitot(f_pit)
+
+    # ============================================================
+    # CELULAS (codigo original com 7-tupla na fila)
+    # ============================================================
+    def _build_celulas(self, parent):
+        top = ttk.Frame(parent); top.pack(fill="x", padx=5, pady=4)
 
         ttk.Label(top, text="Celula:").pack(side="left")
         self.var_celula = tk.StringVar(value="empuxo")
@@ -55,10 +83,8 @@ class AbaCalibracao(ttk.Frame):
         ttk.Button(top, text="📊 CALCULAR REGRESSAO", command=self._calcular).pack(side="left", padx=4)
         ttk.Button(top, text="💾 Salvar", command=self._salvar).pack(side="left")
 
-        # Corpo: tabela de pontos a esquerda, plot e resultado a direita
-        body = ttk.Frame(self); body.pack(fill="both", expand=True, padx=5, pady=4)
+        body = ttk.Frame(parent); body.pack(fill="both", expand=True, padx=5, pady=4)
 
-        # Tabela
         left = ttk.Frame(body); left.pack(side="left", fill="y")
         cols = ("idx", "celula", "direcao", "peso_g", "raw")
         self.tree = ttk.Treeview(left, columns=cols, show="headings", height=18)
@@ -69,7 +95,6 @@ class AbaCalibracao(ttk.Frame):
         sb = ttk.Scrollbar(left, command=self.tree.yview); sb.pack(side="left", fill="y")
         self.tree.configure(yscrollcommand=sb.set)
 
-        # Direita: plot + resultado
         right = ttk.Frame(body); right.pack(side="right", fill="both", expand=True, padx=8)
 
         self.fig = Figure(figsize=(6, 4), dpi=100, tight_layout=True)
@@ -80,7 +105,6 @@ class AbaCalibracao(ttk.Frame):
         self.txt_resultado = tk.Text(right, height=12, font=("Courier", 9))
         self.txt_resultado.pack(fill="x", pady=4)
 
-    # ----------------------------------------------------
     def _tarar(self):
         if not (self.app.reader and self.app.reader.connected):
             messagebox.showwarning("Tara", "Conecte primeiro.")
@@ -91,7 +115,7 @@ class AbaCalibracao(ttk.Frame):
         t0 = time.time()
         while len(amos_e) < 30 and time.time() - t0 < 5:
             try:
-                t, re, rt, p, dt = self.app.reader.queue.get(timeout=0.5)
+                t, re, rt, p, dt, rp, sp = self.app.reader.queue.get(timeout=0.5)
                 amos_e.append(re); amos_t.append(rt)
             except queue.Empty:
                 break
@@ -100,7 +124,6 @@ class AbaCalibracao(ttk.Frame):
             return
         self.app.cal.offset_empuxo = float(np.mean(amos_e))
         self.app.cal.offset_torque = float(np.mean(amos_t))
-        from datetime import datetime
         self.app.cal.data_offset = datetime.now().isoformat(timespec="seconds")
         self.app.cal.salvar(self.app.cal_path)
         messagebox.showinfo("Tara", f"OK ({len(amos_e)} amostras).")
@@ -122,7 +145,7 @@ class AbaCalibracao(ttk.Frame):
         t0 = time.time()
         while len(amos) < 30 and time.time() - t0 < 5:
             try:
-                t, re, rt, p, dt = self.app.reader.queue.get(timeout=0.5)
+                t, re, rt, p, dt, rp, sp = self.app.reader.queue.get(timeout=0.5)
                 amos.append(re if celula == "empuxo" else rt)
             except queue.Empty:
                 break
@@ -173,7 +196,6 @@ class AbaCalibracao(ttk.Frame):
         modelo = self.app.cal.empuxo if celula == "empuxo" else self.app.cal.torque
         det_hist = calibrar(pesos, raws, direcoes, modelo)
 
-        # Plot
         self.ax.clear()
         pesos_arr = np.array(pesos); raws_arr = np.array(raws); dir_arr = np.array(direcoes)
         m_sub = dir_arr == "subida"; m_des = dir_arr == "descida"
@@ -191,7 +213,6 @@ class AbaCalibracao(ttk.Frame):
         self.ax.legend(); self.ax.grid(True, alpha=0.3)
         self.canvas.draw_idle()
 
-        # Texto
         self.txt_resultado.delete("1.0", "end")
         self.txt_resultado.insert("end",
             f"=== {celula.upper()} ===\n"
@@ -216,3 +237,174 @@ class AbaCalibracao(ttk.Frame):
     def _salvar(self):
         self.app.cal.salvar(self.app.cal_path)
         messagebox.showinfo("Salvar", f"Calibracao salva em\n{self.app.cal_path}")
+
+    # ============================================================
+    # PITOT
+    # ============================================================
+    def _build_pitot(self, parent):
+        top = ttk.Frame(parent); top.pack(fill="x", padx=8, pady=8)
+
+        gb_sensor = ttk.LabelFrame(parent, text="Sensor")
+        gb_sensor.pack(fill="x", padx=8, pady=4)
+
+        ttk.Label(gb_sensor, text="Modelo / variante:").grid(row=0, column=0, sticky="w", padx=4, pady=2)
+        self.cb_pit_sensor = ttk.Combobox(gb_sensor, width=40, state="readonly",
+                                          values=list(SENSOR_PRESETS.keys()) + ["Customizado"])
+        self.cb_pit_sensor.set(self.app.pitot_cal.sensor if self.app.pitot_cal.sensor in SENSOR_PRESETS
+                                else "Customizado")
+        self.cb_pit_sensor.grid(row=0, column=1, sticky="w", padx=4, pady=2)
+        self.cb_pit_sensor.bind("<<ComboboxSelected>>", self._on_sensor_select)
+
+        ttk.Label(gb_sensor, text="Range (Pa, +/-):").grid(row=1, column=0, sticky="w", padx=4)
+        self.e_pit_range = ttk.Entry(gb_sensor, width=15)
+        self.e_pit_range.insert(0, f"{self.app.pitot_cal.range_pa:.2f}")
+        self.e_pit_range.grid(row=1, column=1, sticky="w", padx=4)
+
+        ttk.Label(gb_sensor, text="Pa por count:").grid(row=2, column=0, sticky="w", padx=4)
+        self.e_pit_pa_count = ttk.Entry(gb_sensor, width=15)
+        self.e_pit_pa_count.insert(0, f"{self.app.pitot_cal.pa_per_count:.6f}")
+        self.e_pit_pa_count.grid(row=2, column=1, sticky="w", padx=4)
+
+        ttk.Label(gb_sensor, text="Correcao k (vs anemometro ref):").grid(row=3, column=0, sticky="w", padx=4)
+        self.e_pit_k = ttk.Entry(gb_sensor, width=15)
+        self.e_pit_k.insert(0, f"{self.app.pitot_cal.k_corr:.6f}")
+        self.e_pit_k.grid(row=3, column=1, sticky="w", padx=4)
+        ttk.Label(gb_sensor, text="(default 1.0)", foreground="grey").grid(row=3, column=2, sticky="w", padx=4)
+
+        gb_tara = ttk.LabelFrame(parent, text="Tara (offset zero)")
+        gb_tara.pack(fill="x", padx=8, pady=4)
+
+        ttk.Button(gb_tara, text="Tarar zero (50 amostras com tunel desligado)",
+                   command=self._tarar_pitot).grid(row=0, column=0, padx=4, pady=4)
+
+        self.lbl_pit_offset = ttk.Label(gb_tara, text=self._fmt_offset(), font=("Courier", 10))
+        self.lbl_pit_offset.grid(row=0, column=1, padx=8)
+
+        gb_acoes = ttk.Frame(parent); gb_acoes.pack(fill="x", padx=8, pady=8)
+        ttk.Button(gb_acoes, text="💾 Salvar calibracao do Pitot",
+                   command=self._salvar_pitot).pack(side="left", padx=4)
+
+        # Status / leitura ao vivo
+        gb_live = ttk.LabelFrame(parent, text="Leitura ao vivo")
+        gb_live.pack(fill="x", padx=8, pady=4)
+        self.lbl_pit_live = ttk.Label(gb_live, text="(conecte para ler)", font=("Courier", 10))
+        self.lbl_pit_live.pack(padx=4, pady=4)
+        ttk.Button(gb_live, text="↻ Atualizar leitura",
+                   command=self._ler_pitot_live).pack(padx=4, pady=4)
+
+        # info textual
+        self.txt_pit_info = tk.Text(parent, height=8, font=("Courier", 9))
+        self.txt_pit_info.pack(fill="x", padx=8, pady=4)
+        self._refresh_info_pitot()
+
+    def _on_sensor_select(self, *args):
+        nome = self.cb_pit_sensor.get()
+        if nome in SENSOR_PRESETS:
+            range_pa, pa_per_count = SENSOR_PRESETS[nome]
+            self.e_pit_range.delete(0, tk.END); self.e_pit_range.insert(0, f"{range_pa:.2f}")
+            self.e_pit_pa_count.delete(0, tk.END); self.e_pit_pa_count.insert(0, f"{pa_per_count:.6f}")
+
+    def _fmt_offset(self):
+        c = self.app.pitot_cal
+        return (f"offset = {c.raw_offset:8.2f}   "
+                f"desvio = {c.desvio_tara:5.2f}   "
+                f"n = {c.n_amostras_tara:3d}   "
+                f"({c.qualidade()})")
+
+    def _tarar_pitot(self):
+        if not (self.app.reader and self.app.reader.connected):
+            messagebox.showwarning("Tara Pitot", "Conecte primeiro.")
+            return
+        if not messagebox.askyesno("Tara Pitot",
+                                   "Confirme: tunel desligado e helice parada (V=0)?"):
+            return
+        amos_raw, amos_st = [], []
+        t0 = time.time()
+        while len(amos_raw) < 50 and time.time() - t0 < 5:
+            try:
+                t, re, rt, p, dt, rp, sp = self.app.reader.queue.get(timeout=0.5)
+                amos_raw.append(rp); amos_st.append(sp)
+            except queue.Empty:
+                break
+        if len(amos_raw) < 5:
+            messagebox.showerror("Tara Pitot", "Poucas amostras.")
+            return
+        offset, desvio, n = calcular_tara(amos_raw, amos_st)
+        if n == 0:
+            messagebox.showerror("Tara Pitot",
+                                 "Nenhuma amostra com status OK. "
+                                 "Verifique se o MS4525DO esta conectado em A4/A5.")
+            return
+        self.app.pitot_cal.raw_offset = offset
+        self.app.pitot_cal.n_amostras_tara = n
+        self.app.pitot_cal.desvio_tara = desvio
+        self.app.pitot_cal.data_offset = datetime.now().isoformat(timespec="seconds")
+        self.lbl_pit_offset.config(text=self._fmt_offset())
+        self.app.atualizar_status_calibracao()
+        messagebox.showinfo("Tara Pitot",
+                            f"OK ({n} amostras).\n"
+                            f"Offset = {offset:.2f}\n"
+                            f"Desvio = {desvio:.2f}")
+        self._refresh_info_pitot()
+
+    def _salvar_pitot(self):
+        try:
+            self.app.pitot_cal.sensor = self.cb_pit_sensor.get()
+            self.app.pitot_cal.range_pa = float(self.e_pit_range.get().replace(",", "."))
+            self.app.pitot_cal.pa_per_count = float(self.e_pit_pa_count.get().replace(",", "."))
+            self.app.pitot_cal.k_corr = float(self.e_pit_k.get().replace(",", "."))
+        except ValueError as e:
+            messagebox.showerror("Pitot", f"Valor invalido: {e}")
+            return
+        salvar_pitot_cal(self.app.pitot_cal_path, self.app.pitot_cal)
+        self.app.atualizar_status_calibracao()
+        self._refresh_info_pitot()
+        messagebox.showinfo("Pitot", f"Calibracao salva em\n{self.app.pitot_cal_path}\n\n"
+                                     f"cal_id: {self.app.pitot_cal.cal_id}")
+
+    def _refresh_info_pitot(self):
+        c = self.app.pitot_cal
+        self.txt_pit_info.delete("1.0", "end")
+        self.txt_pit_info.insert("end",
+            f"sensor       : {c.sensor}\n"
+            f"range_pa     : {c.range_pa:.2f}\n"
+            f"pa_per_count : {c.pa_per_count:.6f}\n"
+            f"raw_offset   : {c.raw_offset:.2f}\n"
+            f"k_corr       : {c.k_corr:.6f}\n"
+            f"data_offset  : {c.data_offset}\n"
+            f"qualidade    : {c.qualidade()}\n"
+            f"cal_id       : {c.cal_id or 'NA'}\n"
+        )
+
+    def _ler_pitot_live(self):
+        if not (self.app.reader and self.app.reader.connected):
+            self.lbl_pit_live.config(text="(desconectado)", foreground="grey")
+            return
+        # le ate 10 amostras e mostra a media
+        amos_raw, amos_st = [], []
+        t0 = time.time()
+        while len(amos_raw) < 10 and time.time() - t0 < 2:
+            try:
+                t, re, rt, p, dt, rp, sp = self.app.reader.queue.get(timeout=0.3)
+                amos_raw.append(rp); amos_st.append(sp)
+            except queue.Empty:
+                break
+        if not amos_raw:
+            self.lbl_pit_live.config(text="(sem amostras)", foreground="grey")
+            return
+        raw_med = float(np.mean(amos_raw))
+        st_atual = int(amos_st[-1])
+        # converte usando os valores que estao nos campos da UI (sem salvar)
+        try:
+            offset = self.app.pitot_cal.raw_offset
+            pa_per_count = float(self.e_pit_pa_count.get().replace(",", "."))
+            k = float(self.e_pit_k.get().replace(",", "."))
+        except ValueError:
+            pa_per_count = self.app.pitot_cal.pa_per_count
+            k = self.app.pitot_cal.k_corr
+            offset = self.app.pitot_cal.raw_offset
+        q = (raw_med - offset) * pa_per_count * k
+        self.lbl_pit_live.config(
+            text=f"raw_med = {raw_med:8.1f}   q = {q:+7.2f} Pa   status = {status_legivel(st_atual)}",
+            foreground="green" if st_atual == PITOT_OK else "orange",
+        )

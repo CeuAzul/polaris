@@ -13,10 +13,11 @@ from tkinter import ttk, messagebox
 import serial.tools.list_ports
 
 from config import (
-    ARQUIVO_CALIBRACAO, ARQUIVO_BANCO,
+    ARQUIVO_CALIBRACAO, ARQUIVO_PITOT_CAL, ARQUIVO_BANCO,
     DEFAULT_BAUDRATE, PORTA_REMOTA_PADRAO,
 )
 from core.calibration import Calibration
+from core.pitot import carregar_pitot_cal
 from core.serial_reader import SerialReader
 from core import database
 from core.remote_server import RemoteServer
@@ -36,6 +37,8 @@ class App:
         # Estado
         self.cal_path = ARQUIVO_CALIBRACAO
         self.cal = Calibration.carregar(self.cal_path)
+        self.pitot_cal_path = ARQUIVO_PITOT_CAL
+        self.pitot_cal = carregar_pitot_cal(self.pitot_cal_path)
         self.reader = None
         self.remote_server = None
 
@@ -121,16 +124,25 @@ class App:
             return
 
         emp_max = max((d["emp_g"] for d in dados_coleta), default=0)
-        tor_max_ncm = max((d["tor_Ncm"] for d in dados_coleta), default=0)
+        # torque_max em N.m para coerencia com a coluna do banco
+        tor_max_nm = max((d["tor_Nm"] for d in dados_coleta), default=0)
         rpm_max = max((d["rpm"] for d in dados_coleta), default=0)
+        v_max = max((d.get("V_ms", 0.0) for d in dados_coleta), default=0)
         duracao = dados_coleta[-1]["t"] if dados_coleta else 0
+
+        tipo_ensaio = metadados.get("tipo_ensaio", "estatico")
 
         sumario = {
             "duracao_s": duracao,
             "empuxo_max_g": emp_max,
-            "torque_max_Ncm": tor_max_ncm,
+            "torque_max_Nm": tor_max_nm,
             "rpm_max": rpm_max,
+            "velocidade_max_ms": v_max,
+            "tipo_ensaio": tipo_ensaio,
+            "pitot_cal_id": self.pitot_cal.cal_id,
             "n_patamares": 0,
+            "J_max": 0.0,
+            "eta_max": 0.0,
         }
 
         # tenta extrair sweep ja para indexar os patamares
@@ -142,6 +154,9 @@ class App:
             rho = float(metadados["condicoes"]["rho_kg_m3"])
             df_sw = extrair_sweep(df, helice_diametro_in=D_in, rho=rho)
             sumario["n_patamares"] = len(df_sw)
+            if df_sw is not None and not df_sw.empty and "J" in df_sw.columns:
+                sumario["J_max"] = float(df_sw["J"].max())
+                sumario["eta_max"] = float(df_sw["eta"].max())
         except Exception:
             df_sw = None
 
@@ -208,14 +223,15 @@ class App:
     # ----------------------------------------------------
     def _sobre(self):
         messagebox.showinfo("Sobre",
-            "Bancada de Empuxo - Ceu Azul Aerodesign\n"
-            "Versao 2.0\n\n"
+            "POLARIS - Bancada de Empuxo - Ceu Azul Aerodesign\n"
+            "Versao 3.0 (suporte a Pitot MS4525DO)\n\n"
             "Funcoes:\n"
             "  • Coleta com RPM via fio do ESC\n"
+            "  • Pitot opcional (MS4525DO) para empuxo dinamico\n"
             "  • Calibracao multipontos com histerese\n"
             "  • Sweep manual (extracao de patamares)\n"
-            "  • Coeficientes adimensionais (C_T, C_P, FOM)\n"
-            "  • Comparacao com banco UIUC\n"
+            "  • Coeficientes adimensionais (C_T, C_P, FOM, J, eta)\n"
+            "  • Comparacao com banco UIUC (estatico e dinamico)\n"
             "  • Analise FFT\n"
             "  • Banco SQLite de ensaios\n"
             "  • Monitor remoto via celular\n"

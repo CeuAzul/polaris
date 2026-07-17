@@ -19,6 +19,28 @@ from config import ARQUIVO_BANCO
 from core import database
 
 
+# Mapeamento de eixo Y -> coluna na tabela sweep_pontos
+COLUNAS_Y_DISPONIVEIS = {
+    "empuxo_g": "empuxo_g",
+    "torque_Nm": "torque_Nm",
+    "p_mec_W": "p_mec_W",
+    "T_por_P": "T_por_P",
+    "C_T": "C_T",
+    "C_P": "C_P",
+    "FOM": "FOM",
+    "J": "J",
+    "eta": "eta",
+    "V_med": "V_med",
+}
+
+# Mapeamento de eixo X -> coluna
+COLUNAS_X_DISPONIVEIS = {
+    "RPM": "rpm",
+    "J": "J",
+    "V_med": "V_med",
+}
+
+
 class AbaEnsaios(ttk.Frame):
     def __init__(self, parent, app):
         super().__init__(parent)
@@ -35,14 +57,19 @@ class AbaEnsaios(ttk.Frame):
         ttk.Label(top, text="Motor:").pack(side="left", padx=(8, 0))
         self.var_filt_m = tk.StringVar()
         ttk.Entry(top, textvariable=self.var_filt_m, width=15).pack(side="left", padx=4)
+        ttk.Label(top, text="Tipo:").pack(side="left", padx=(8, 0))
+        self.var_filt_tipo = tk.StringVar(value="(todos)")
+        ttk.Combobox(top, textvariable=self.var_filt_tipo, width=10, state="readonly",
+                     values=["(todos)", "estatico", "dinamico"]).pack(side="left", padx=4)
         ttk.Button(top, text="🔍 Filtrar", command=self.refresh).pack(side="left", padx=8)
         ttk.Button(top, text="↻ Atualizar", command=self.refresh).pack(side="left")
         ttk.Button(top, text="🗑 Deletar selecionado",
                    command=self._deletar).pack(side="right", padx=4)
 
         # ----- tabela -----
-        cols = ("id", "data", "helice", "motor", "duracao", "emp_max", "rpm_max", "n_pat")
-        widths = (40, 140, 200, 200, 70, 80, 80, 50)
+        cols = ("id", "data", "tipo", "helice", "motor", "duracao",
+                "emp_max", "rpm_max", "V_max", "n_pat")
+        widths = (40, 130, 70, 180, 180, 70, 80, 80, 70, 50)
         self.tree = ttk.Treeview(self, columns=cols, show="headings", height=10,
                                  selectmode="extended")
         for c, w in zip(cols, widths):
@@ -57,12 +84,16 @@ class AbaEnsaios(ttk.Frame):
         cmp_top = ttk.Frame(cmp_frame); cmp_top.pack(fill="x", padx=4, pady=4)
         ttk.Button(cmp_top, text="📊 Comparar selecionados",
                    command=self._comparar).pack(side="left", padx=4)
+        ttk.Label(cmp_top, text="Eixo X:").pack(side="left", padx=(10, 2))
+        self.var_x = tk.StringVar(value="RPM")
+        ttk.Combobox(cmp_top, textvariable=self.var_x, state="readonly",
+                     values=list(COLUNAS_X_DISPONIVEIS.keys()),
+                     width=8).pack(side="left", padx=4)
         ttk.Label(cmp_top, text="Eixo Y:").pack(side="left", padx=(10, 2))
         self.var_y = tk.StringVar(value="empuxo_g")
         ttk.Combobox(cmp_top, textvariable=self.var_y, state="readonly",
-                     values=["empuxo_g", "torque_Ncm", "p_mec_W",
-                             "T_por_P", "C_T", "C_P", "FOM"],
-                     width=14).pack(side="left", padx=4)
+                     values=list(COLUNAS_Y_DISPONIVEIS.keys()),
+                     width=12).pack(side="left", padx=4)
 
         self.fig = Figure(figsize=(9, 4), dpi=100, tight_layout=True)
         self.ax = self.fig.add_subplot(111)
@@ -83,17 +114,27 @@ class AbaEnsaios(ttk.Frame):
             messagebox.showerror("Banco", f"Erro: {e}")
             return
 
+        # filtro de tipo (em memoria)
+        tipo_sel = self.var_filt_tipo.get()
+        if tipo_sel != "(todos)":
+            ensaios = [e for e in ensaios
+                       if (e.get("tipo_ensaio") or "estatico") == tipo_sel]
+
         for i in self.tree.get_children():
             self.tree.delete(i)
         for e in ensaios:
+            tipo = e.get("tipo_ensaio") or "estatico"
+            v_max = e.get("velocidade_max_ms", 0) or 0
             self.tree.insert("", "end", iid=str(e["id"]), values=(
                 e["id"],
                 e.get("data_iso", "")[:16].replace("T", " "),
+                tipo,
                 e.get("helice", ""),
                 e.get("motor", ""),
                 f"{e.get('duracao_s', 0):.1f}s",
                 f"{e.get('empuxo_max_g', 0):.0f}g",
                 f"{e.get('rpm_max', 0):.0f}",
+                f"{v_max:.1f}m/s" if tipo == "dinamico" else "—",
                 e.get("n_patamares", 0),
             ))
 
@@ -120,31 +161,27 @@ class AbaEnsaios(ttk.Frame):
         self.ax.clear()
         cor_palette = ["#1f6feb", "#d05050", "#0a8a4a", "#c08a00", "#7a40c0", "#40c0a0"]
 
-        coluna_db = {
-            "empuxo_g": "empuxo_g",
-            "torque_Ncm": "torque_Ncm",
-            "p_mec_W": "p_mec_W",
-            "T_por_P": "T_por_P",
-            "C_T": "C_T", "C_P": "C_P", "FOM": "FOM",
-        }[self.var_y.get()]
+        col_y = COLUNAS_Y_DISPONIVEIS[self.var_y.get()]
+        col_x = COLUNAS_X_DISPONIVEIS[self.var_x.get()]
 
         for k, iid in enumerate(sel):
             ensaio_id = int(iid)
             pontos = database.get_sweep_pontos(ARQUIVO_BANCO, ensaio_id)
             if not pontos:
                 continue
-            df = pd.DataFrame(pontos).sort_values("rpm")
-            if coluna_db not in df.columns:
+            df = pd.DataFrame(pontos)
+            if col_x not in df.columns or col_y not in df.columns:
                 continue
+            df = df.sort_values(col_x)
             ensaio_info = self.tree.item(iid, "values")
-            label = f"#{ensaio_info[0]} {ensaio_info[2][:20]}"
-            self.ax.plot(df["rpm"], df[coluna_db], "o-",
+            label = f"#{ensaio_info[0]} {ensaio_info[3][:20]}"
+            self.ax.plot(df[col_x], df[col_y], "o-",
                          color=cor_palette[k % len(cor_palette)],
                          label=label, markersize=6)
 
-        self.ax.set_xlabel("RPM")
+        self.ax.set_xlabel(self.var_x.get())
         self.ax.set_ylabel(self.var_y.get())
-        self.ax.set_title(f"Comparacao - {self.var_y.get()} vs RPM")
+        self.ax.set_title(f"Comparacao - {self.var_y.get()} vs {self.var_x.get()}")
         self.ax.grid(True, alpha=0.3)
         if self.ax.has_data():
             self.ax.legend(fontsize=8)

@@ -10,17 +10,27 @@ Conversoes principais:
     P_mec [W]    = omega * Torque
     T/P [g/W]    = empuxo[g] / P_mec[W]
 
-Coeficientes adimensionais (J = 0, ensaio estatico):
+Coeficientes adimensionais:
     n [rev/s] = RPM_mec / 60
     C_T = T / (rho * n^2 * D^4)
     C_P = P_mec / (rho * n^3 * D^5)
     C_Q = Q / (rho * n^2 * D^5)
+
+Em ensaio estatico (J = 0):
     FOM = C_T^1.5 / (C_P * sqrt(2))   (figure of merit estatico)
+
+Em ensaio dinamico (V_inflow > 0):
+    J = V / (n * D)                   (razao de avanco)
+    eta = J * C_T / C_P               (eficiencia da helice)
 """
 import math
 import numpy as np
 
 from config import GRAVIDADE, BRACO_TORQUE_M
+
+
+# Velocidade abaixo desta e considerada estatica (J~0). Acima, calcula J/eta.
+LIMIAR_DINAMICO_MS = 0.5
 
 
 # ------------------------------------------------------------
@@ -62,7 +72,8 @@ def rpm_de_pulsos(pulsos: int, dt_us: int, pares_polos: int) -> float:
         RPM_mec = (pulsos / dt_s × 60) / pares_polos
 
     Validado empiricamente comparando empuxo medido com banco UIUC
-    para APC 16x8E com motor X4120 (7 pares de polos).
+    para APC 16x8E com motor X4120 (7 pares de polos), e contra
+    tacometro optico TC-5035.
     """
     if dt_us <= 0 or pares_polos <= 0:
         return 0.0
@@ -90,16 +101,46 @@ def empuxo_especifico_g_por_W(empuxo_g: float, p_mec_W: float) -> float:
 
 
 # ------------------------------------------------------------
+# Razao de avanco e eficiencia da helice
+# ------------------------------------------------------------
+def razao_avanco_J(V_ms: float, rpm_mec: float, D_m: float) -> float:
+    """
+    J = V / (n * D), onde n = RPM/60 (rev/s).
+    Para RPM ou D <= 0 retorna 0 (caso degenerado).
+    """
+    if rpm_mec <= 0 or D_m <= 0:
+        return 0.0
+    n_rps = rpm_mec / 60.0
+    return float(V_ms) / (n_rps * D_m)
+
+
+def eficiencia_helice(J: float, C_T: float, C_P: float) -> float:
+    """
+    eta = J * C_T / C_P. So faz sentido para J > 0 e C_P > 0.
+    Em J=0 (estatico) retorna 0 - use FOM nesse caso.
+    """
+    if J <= 0 or C_P <= 0:
+        return 0.0
+    return float(J * C_T / C_P)
+
+
+# ------------------------------------------------------------
 # Coeficientes adimensionais
 # ------------------------------------------------------------
 def coeficientes(empuxo_g: float, forca_torque_g: float, rpm_mec: float,
-                 D_m: float, rho: float, braco_m: float = BRACO_TORQUE_M) -> dict:
+                 D_m: float, rho: float, braco_m: float = BRACO_TORQUE_M,
+                 V_inflow_ms: float = 0.0) -> dict:
     """
-    Calcula C_T, C_P, C_Q, FOM (estatico, J=0).
+    Calcula C_T, C_P, C_Q, FOM, J, eta.
+
+    Quando V_inflow_ms > LIMIAR_DINAMICO_MS, calcula J e eta (modo dinamico).
+    FOM continua sendo retornado mas so e fisicamente significativo em J~0.
+
     Retorna dict ou zeros se RPM muito baixo.
     """
+    base = {"C_T": 0.0, "C_P": 0.0, "C_Q": 0.0, "FOM": 0.0, "J": 0.0, "eta": 0.0}
     if rpm_mec < 100 or D_m <= 0 or rho <= 0:
-        return {"C_T": 0.0, "C_P": 0.0, "C_Q": 0.0, "FOM": 0.0}
+        return base
 
     n_rps = rpm_mec / 60.0
     T_N = (empuxo_g / 1000.0) * GRAVIDADE
@@ -120,7 +161,11 @@ def coeficientes(empuxo_g: float, forca_torque_g: float, rpm_mec: float,
     else:
         FOM = 0.0
 
-    return {"C_T": C_T, "C_P": C_P, "C_Q": C_Q, "FOM": FOM}
+    # J e eta no modo dinamico
+    J = razao_avanco_J(V_inflow_ms, rpm_mec, D_m)
+    eta = eficiencia_helice(J, C_T, C_P) if V_inflow_ms > LIMIAR_DINAMICO_MS else 0.0
+
+    return {"C_T": C_T, "C_P": C_P, "C_Q": C_Q, "FOM": FOM, "J": J, "eta": eta}
 
 
 # ------------------------------------------------------------

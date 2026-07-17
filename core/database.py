@@ -1,6 +1,9 @@
 """
 Banco SQLite simples para indexar ensaios e permitir comparacao
 entre eles. Cada ensaio guarda metadados, caminho do CSV e sumario.
+
+Migration suave: ALTER TABLE idempotente para adicionar colunas
+do modo dinamico (Pitot) sem quebrar bases antigas.
 """
 import sqlite3
 import json
@@ -14,8 +17,24 @@ def conectar(path):
     return conn
 
 
+# Colunas adicionadas em V3 (modo dinamico). Ordem importa para a migration.
+COLUNAS_V3_ENSAIOS = [
+    ("tipo_ensaio", "TEXT DEFAULT 'estatico'"),
+    ("velocidade_max_ms", "REAL DEFAULT 0.0"),
+    ("J_max", "REAL DEFAULT 0.0"),
+    ("eta_max", "REAL DEFAULT 0.0"),
+    ("pitot_cal_id", "TEXT"),
+]
+COLUNAS_V3_SWEEP = [
+    ("V_med", "REAL DEFAULT 0.0"),
+    ("V_std", "REAL DEFAULT 0.0"),
+    ("J", "REAL DEFAULT 0.0"),
+    ("eta", "REAL DEFAULT 0.0"),
+]
+
+
 def init_db(path):
-    """Cria as tabelas se nao existirem."""
+    """Cria as tabelas se nao existirem e aplica migration V3."""
     conn = conectar(path)
     cur = conn.cursor()
     cur.execute("""
@@ -58,7 +77,19 @@ def init_db(path):
         )
     """)
     conn.commit()
+    _migrar_v3(cur)
+    conn.commit()
     conn.close()
+
+
+def _migrar_v3(cur):
+    """Adiciona colunas V3 se ainda nao existirem (idempotente)."""
+    for tabela, colunas in (("ensaios", COLUNAS_V3_ENSAIOS),
+                            ("sweep_pontos", COLUNAS_V3_SWEEP)):
+        existentes = {row[1] for row in cur.execute(f"PRAGMA table_info({tabela})")}
+        for nome, definicao in colunas:
+            if nome not in existentes:
+                cur.execute(f"ALTER TABLE {tabela} ADD COLUMN {nome} {definicao}")
 
 
 def inserir_ensaio(path_db, csv_path, metadados, cal_id, sumario):
@@ -68,8 +99,9 @@ def inserir_ensaio(path_db, csv_path, metadados, cal_id, sumario):
     cur.execute("""
         INSERT INTO ensaios
             (data_iso, csv_path, metadados_json, cal_id, helice, motor,
-             duracao_s, empuxo_max_g, torque_max_Nm, rpm_max, n_patamares, observacoes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             duracao_s, empuxo_max_g, torque_max_Nm, rpm_max, n_patamares, observacoes,
+             tipo_ensaio, velocidade_max_ms, J_max, eta_max, pitot_cal_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         datetime.now().isoformat(timespec="seconds"),
         str(csv_path),
@@ -83,6 +115,11 @@ def inserir_ensaio(path_db, csv_path, metadados, cal_id, sumario):
         sumario.get("rpm_max", 0.0),
         sumario.get("n_patamares", 0),
         metadados.get("observacoes", ""),
+        sumario.get("tipo_ensaio", "estatico"),
+        sumario.get("velocidade_max_ms", 0.0),
+        sumario.get("J_max", 0.0),
+        sumario.get("eta_max", 0.0),
+        sumario.get("pitot_cal_id", ""),
     ))
     ensaio_id = cur.lastrowid
     conn.commit()
@@ -101,8 +138,9 @@ def inserir_sweep_pontos(path_db, ensaio_id, df_sweep):
             INSERT INTO sweep_pontos
                 (ensaio_id, idx, t_ini, t_fim, empuxo_g, empuxo_g_std,
                  forca_torque_g, torque_Nm, rpm, rpm_std, p_mec_W, T_por_P,
-                 C_T, C_P, C_Q, FOM)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 C_T, C_P, C_Q, FOM,
+                 V_med, V_std, J, eta)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             ensaio_id,
             int(row["idx"]),
@@ -112,6 +150,10 @@ def inserir_sweep_pontos(path_db, ensaio_id, df_sweep):
             float(row["rpm"]), float(row["rpm_std"]),
             float(row["p_mec_W"]), float(row["T_por_P_g_por_W"]),
             float(row["C_T"]), float(row["C_P"]), float(row["C_Q"]), float(row["FOM"]),
+            float(row.get("V_med", 0.0)),
+            float(row.get("V_std", 0.0)),
+            float(row.get("J", 0.0)),
+            float(row.get("eta", 0.0)),
         ))
     conn.commit()
     conn.close()

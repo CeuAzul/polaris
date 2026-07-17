@@ -20,12 +20,13 @@ HTML = """<!doctype html>
 <html lang="pt-br"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Bancada - Monitor</title>
+<title>POLARIS - Monitor</title>
 <style>
   body { font-family: -apple-system, sans-serif; margin: 0; background: #0f1115; color: #e7e9ec; }
   .header { padding: 16px; background: #1a1d24; border-bottom: 2px solid #2a2f3a; }
   .header h1 { margin: 0; font-size: 18px; color: #6db3ff; }
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 12px; }
+  .grid.dyn { grid-template-columns: 1fr 1fr 1fr; }
   .card { background: #1a1d24; border-radius: 12px; padding: 18px; }
   .card .label { font-size: 12px; color: #8a93a4; text-transform: uppercase; letter-spacing: 1px; }
   .card .val { font-size: 32px; font-weight: 700; margin-top: 6px; color: #e7e9ec; }
@@ -34,18 +35,26 @@ HTML = """<!doctype html>
   .torque .val { color: #6dffaf; }
   .rpm .val    { color: #ffd66d; }
   .pmec .val   { color: #ff8a6d; }
-  .badge { display:inline-block; padding:4px 10px; border-radius:8px; font-size:12px; font-weight:600; }
+  .vel .val    { color: #c0a0ff; }
+  .j .val      { color: #c0a0ff; }
+  .eta .val    { color: #c0a0ff; }
+  .badge { display:inline-block; padding:4px 10px; border-radius:8px; font-size:12px; font-weight:600; margin-right:6px; }
   .badge.estavel { background:#1f4d2a; color:#7be39a; }
   .badge.instavel { background:#5a3d1a; color:#ffb677; }
   .badge.off { background:#3a2a2a; color:#ff7f7f; }
+  .badge.pitot { background:#2a3a5a; color:#a0c0ff; }
   .footer { text-align:center; padding:10px; font-size:11px; color:#5a6478; }
+  .hide { display:none; }
 </style></head>
 <body>
 <div class="header">
-  <h1>Bancada de Empuxo - Monitor Remoto</h1>
-  <div id="status" class="badge off" style="margin-top:8px">aguardando dados...</div>
+  <h1>POLARIS - Monitor Remoto</h1>
+  <div style="margin-top:8px">
+    <span id="status" class="badge off">aguardando dados...</span>
+    <span id="pitot_badge" class="badge pitot hide">Pitot ativo</span>
+  </div>
 </div>
-<div class="grid">
+<div id="grid_main" class="grid">
   <div class="card empuxo"><div class="label">Empuxo</div>
     <div><span class="val" id="emp">--</span><span class="unit">g</span></div>
     <div style="color:#8a93a4;font-size:14px;margin-top:4px"><span id="empN">--</span> N</div>
@@ -59,6 +68,18 @@ HTML = """<!doctype html>
   <div class="card pmec"><div class="label">P. mecanica</div>
     <div><span class="val" id="pm">--</span><span class="unit">W</span></div>
     <div style="color:#8a93a4;font-size:14px;margin-top:4px">T/P: <span id="tp">--</span> g/W</div>
+  </div>
+</div>
+<div id="grid_pitot" class="grid dyn hide" style="border-top:1px solid #2a2f3a">
+  <div class="card vel"><div class="label">Velocidade</div>
+    <div><span class="val" id="V">--</span><span class="unit">m/s</span></div>
+    <div style="color:#8a93a4;font-size:14px;margin-top:4px">q: <span id="qpa">--</span> Pa</div>
+  </div>
+  <div class="card j"><div class="label">J (avanco)</div>
+    <div><span class="val" id="J">--</span></div>
+  </div>
+  <div class="card eta"><div class="label">Eficiencia eta</div>
+    <div><span class="val" id="eta">--</span></div>
   </div>
 </div>
 <div class="footer">atualiza a cada 500ms</div>
@@ -76,6 +97,20 @@ async function tick() {
     const s = document.getElementById('status');
     if (d.estavel) { s.className = 'badge estavel'; s.textContent = 'REGIME ESTAVEL  sigma=' + d.desvio_g.toFixed(1) + 'g'; }
     else { s.className = 'badge instavel'; s.textContent = 'instavel  sigma=' + d.desvio_g.toFixed(1) + 'g'; }
+
+    const pitot_grid = document.getElementById('grid_pitot');
+    const pitot_badge = document.getElementById('pitot_badge');
+    if (d.pitot_ativo) {
+      pitot_grid.classList.remove('hide');
+      pitot_badge.classList.remove('hide');
+      document.getElementById('V').textContent = d.velocidade_ms.toFixed(2);
+      document.getElementById('qpa').textContent = d.pressao_dinamica_pa.toFixed(1);
+      document.getElementById('J').textContent = d.J.toFixed(3);
+      document.getElementById('eta').textContent = (d.eta > 0) ? d.eta.toFixed(3) : '—';
+    } else {
+      pitot_grid.classList.add('hide');
+      pitot_badge.classList.add('hide');
+    }
   } catch(e) {
     document.getElementById('status').textContent = 'sem conexao';
   }
@@ -87,7 +122,7 @@ tick();
 
 
 class _Handler(BaseHTTPRequestHandler):
-    server_version = "BancadaMonitor/1.0"
+    server_version = "PolarisMonitor/3.0"
     sys_version = ""
     dados_compartilhados = {}
 
@@ -128,6 +163,8 @@ class RemoteServer:
             "empuxo_g": 0.0, "empuxo_N": 0.0, "torque_Nm": 0.0,
             "rpm": 0.0, "p_mec_W": 0.0, "T_por_P": 0.0,
             "estavel": False, "desvio_g": 0.0,
+            "velocidade_ms": 0.0, "pressao_dinamica_pa": 0.0,
+            "J": 0.0, "eta": 0.0, "pitot_ativo": False,
         }
 
     def start(self):

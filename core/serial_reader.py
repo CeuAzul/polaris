@@ -1,13 +1,31 @@
-"""Leitor serial em thread separada. Formato esperado: raw_e,raw_t,pulsos,dt_us"""
+"""Leitor serial em thread separada.
+
+Suporta dois formatos de protocolo:
+
+  V2 (THRUST_RIG_V2): raw_e,raw_t,pulsos,dt_us
+  V3 (THRUST_RIG_V3): raw_e,raw_t,pulsos,dt_us,raw_pitot,status_pitot
+
+A versao e detectada pelo numero de campos. CSVs/coletas antigas
+(V2) continuam funcionando: o reader emite raw_pitot=0 e
+status_pitot=PITOT_AUSENTE para compatibilidade.
+"""
 import queue
 import threading
 import time
 
 import serial
 
+from core.pitot import PITOT_AUSENTE
+
 
 class SerialReader(threading.Thread):
-    """Le linhas do firmware e enfileira tuplas (t, raw_e, raw_t, pulsos, dt_us)."""
+    """
+    Le linhas do firmware e enfileira tuplas:
+        (t, raw_e, raw_t, pulsos, dt_us, raw_pitot, status_pitot)
+
+    O ultimo par e sempre presente: para firmware V2, vem como
+    (0, PITOT_AUSENTE).
+    """
 
     def __init__(self, port, baudrate=115200):
         super().__init__(daemon=True)
@@ -45,19 +63,34 @@ class SerialReader(threading.Thread):
                     continue
 
                 parts = line.split(",")
-                if len(parts) != 4:
-                    continue
-                try:
-                    raw_e = int(parts[0])
-                    raw_t = int(parts[1])
-                    pulsos = int(parts[2])
-                    dt_us = int(parts[3])
-                except ValueError:
+                # V2: 4 campos. V3: 6 campos. Outros tamanhos sao descartados.
+                if len(parts) == 4:
+                    try:
+                        raw_e = int(parts[0])
+                        raw_t = int(parts[1])
+                        pulsos = int(parts[2])
+                        dt_us = int(parts[3])
+                    except ValueError:
+                        continue
+                    raw_pitot = 0
+                    status_pitot = PITOT_AUSENTE
+                elif len(parts) == 6:
+                    try:
+                        raw_e = int(parts[0])
+                        raw_t = int(parts[1])
+                        pulsos = int(parts[2])
+                        dt_us = int(parts[3])
+                        raw_pitot = int(parts[4])
+                        status_pitot = int(parts[5])
+                    except ValueError:
+                        continue
+                else:
                     continue
 
                 t = time.time()
                 if not self.queue.full():
-                    self.queue.put((t, raw_e, raw_t, pulsos, dt_us))
+                    self.queue.put((t, raw_e, raw_t, pulsos, dt_us,
+                                    raw_pitot, status_pitot))
             except (serial.SerialException, OSError) as e:
                 self.last_error = str(e)
                 break

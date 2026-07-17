@@ -128,7 +128,66 @@ class DialogoMetadados(tk.Toplevel):
         self.e_esc = ttk.Entry(gb_e, width=30); self.e_esc.grid(row=0, column=1, sticky="w", padx=4)
         self.e_esc.insert(0, ant.get("esc", "Hobbywing Platinum 120A V4"))
 
-        # ========== ABA 3: Condicoes/Operador ==========
+        # ========== ABA 3: Aerodinamica ==========
+        f_aero = ttk.Frame(nb); nb.add(f_aero, text="Aerodinamica")
+
+        pitot_ant = ant.get("pitot", {}) if isinstance(ant.get("pitot"), dict) else {}
+
+        # Modo inicial a partir de metadados anteriores
+        ant_tipo = ant.get("tipo_ensaio", "estatico")
+        if ant_tipo == "dinamico":
+            if pitot_ant.get("velocidade_manual"):
+                _modo_default = "manual"
+            elif pitot_ant.get("habilitado"):
+                _modo_default = "pitot"
+            else:
+                _modo_default = "manual"
+        else:
+            _modo_default = "estatico"
+
+        gb_tipo = ttk.LabelFrame(f_aero, text="Modo de ensaio")
+        gb_tipo.pack(fill="x", padx=8, pady=6)
+        self.var_modo_aero = tk.StringVar(value=_modo_default)
+        ttk.Radiobutton(gb_tipo,
+                        text="Estatico  (J = 0, sem escoamento)",
+                        variable=self.var_modo_aero, value="estatico",
+                        command=self._on_modo_aero).pack(anchor="w", padx=6, pady=2)
+        ttk.Radiobutton(gb_tipo,
+                        text="Dinamico — Pitot MS4525DO  (le velocidade automaticamente via I2C)",
+                        variable=self.var_modo_aero, value="pitot",
+                        command=self._on_modo_aero).pack(anchor="w", padx=6, pady=2)
+        ttk.Radiobutton(gb_tipo,
+                        text="Dinamico — Velocidade manual  (operador digita a velocidade do tunel)",
+                        variable=self.var_modo_aero, value="manual",
+                        command=self._on_modo_aero).pack(anchor="w", padx=6, pady=2)
+
+        # Config do sensor Pitot (visivel apenas no modo pitot)
+        self.gb_pitot_cfg = ttk.LabelFrame(f_aero, text="Configuracao do Pitot (MS4525DO)")
+        # sera exibido/ocultado por _on_modo_aero()
+
+        ttk.Label(self.gb_pitot_cfg, text="Sensor:").grid(row=0, column=0, sticky="w", padx=4, pady=2)
+        self.cb_pitot_sensor = ttk.Combobox(self.gb_pitot_cfg, width=32, state="readonly",
+            values=[
+                "MS4525DO-DS3BI001DP (+/-1psi, B)",
+                "MS4525DO-DS3AI001DP (+/-1psi, A)",
+                "Outro (configurar manualmente)",
+            ])
+        self.cb_pitot_sensor.set(pitot_ant.get("sensor", "MS4525DO-DS3BI001DP (+/-1psi, B)"))
+        self.cb_pitot_sensor.grid(row=0, column=1, sticky="w", padx=4)
+
+        ttk.Label(self.gb_pitot_cfg, text="Posicao do Pitot:").grid(row=1, column=0, sticky="w", padx=4)
+        self.e_pitot_pos = ttk.Entry(self.gb_pitot_cfg, width=34)
+        self.e_pitot_pos.insert(0, pitot_ant.get("posicao",
+                                                 "a frente da helice, fora do slipstream"))
+        self.e_pitot_pos.grid(row=1, column=1, sticky="w", padx=4)
+        ttk.Label(self.gb_pitot_cfg,
+                  text="Dica: posicione o Pitot fora do slipstream da helice",
+                  foreground="grey").grid(row=2, column=0, columnspan=2, sticky="w", padx=4, pady=(0, 4))
+
+        # Exibe ou oculta gb_pitot_cfg conforme modo inicial
+        self._on_modo_aero()
+
+        # ========== ABA 4: Condicoes/Operador ==========
         f3 = ttk.Frame(nb); nb.add(f3, text="Condicoes")
 
         gb_c = ttk.LabelFrame(f3, text="Condicoes ambientais")
@@ -180,6 +239,13 @@ class DialogoMetadados(tk.Toplevel):
 
         self.geometry("+%d+%d" % (parent.winfo_rootx() + 80, parent.winfo_rooty() + 60))
         self.wait_window()
+
+    def _on_modo_aero(self, *args):
+        """Exibe ou oculta a secao de configuracao do Pitot conforme o modo selecionado."""
+        if self.var_modo_aero.get() == "pitot":
+            self.gb_pitot_cfg.pack(fill="x", padx=8, pady=4)
+        else:
+            self.gb_pitot_cfg.pack_forget()
 
     def _preencher_anterior(self, ant):
         h = ant.get("helice", {})
@@ -249,6 +315,8 @@ class DialogoMetadados(tk.Toplevel):
                     "umidade_pct": float(self.e_U.get().replace(",", ".")),
                     "rho_kg_m3": float(self._rho),
                 },
+                "tipo_ensaio": "estatico" if self.var_modo_aero.get() == "estatico" else "dinamico",
+                "pitot": self._build_pitot_meta(),
                 "operador": self.e_op.get().strip(),
                 "observacoes": self.t_obs.get("1.0", "end").strip(),
                 "data": datetime.now().isoformat(timespec="seconds"),
@@ -263,6 +331,19 @@ class DialogoMetadados(tk.Toplevel):
 
         self.resultado = md
         self.destroy()
+
+    def _build_pitot_meta(self) -> dict:
+        modo = self.var_modo_aero.get()
+        if modo == "pitot":
+            return {
+                "habilitado": True,
+                "velocidade_manual": False,
+                "sensor": self.cb_pitot_sensor.get(),
+                "posicao": self.e_pitot_pos.get().strip(),
+            }
+        if modo == "manual":
+            return {"habilitado": False, "velocidade_manual": True}
+        return {"habilitado": False, "velocidade_manual": False}
 
     def _cancelar(self):
         self.resultado = None

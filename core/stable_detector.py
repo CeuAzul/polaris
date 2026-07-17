@@ -108,3 +108,75 @@ def detectar_patamares(t: np.ndarray, sinal: np.ndarray,
             i += 1
 
     return patamares
+
+
+def mascara_estavel(t: np.ndarray, sinal: np.ndarray,
+                    janela_s: float = 2.0,
+                    limiar_rel: float = 0.05,
+                    limiar_min_abs: float = 0.2) -> np.ndarray:
+    """
+    Mesmo criterio de estabilidade do detectar_patamares, mas retorna
+    apenas a mascara booleana por amostra (sem agrupar). Util para
+    combinar com outras mascaras (e.g. exigir empuxo E velocidade
+    estaveis simultaneamente).
+    """
+    t = np.asarray(t, dtype=float)
+    s = np.asarray(sinal, dtype=float)
+    n = len(t)
+    if n < 10:
+        return np.zeros(n, dtype=bool)
+    dt_med = float(np.median(np.diff(t)))
+    if dt_med <= 0:
+        return np.zeros(n, dtype=bool)
+    n_jan = max(5, int(round(janela_s / dt_med)))
+
+    desvio = np.zeros(n)
+    media = np.zeros(n)
+    for i in range(n):
+        a = max(0, i - n_jan // 2)
+        b = min(n, i + n_jan // 2 + 1)
+        seg = s[a:b]
+        media[i] = np.mean(seg)
+        desvio[i] = np.std(seg)
+
+    limiar_local = np.maximum(np.abs(media) * limiar_rel, limiar_min_abs)
+    return desvio < limiar_local
+
+
+def patamares_a_partir_de_mascara(t: np.ndarray, mascara: np.ndarray,
+                                  sinal: np.ndarray = None,
+                                  min_dur_s: float = 1.5):
+    """
+    Agrupa amostras True contiguas em patamares com duracao >= min_dur_s.
+    Se 'sinal' for fornecido, computa media/desvio do sinal dentro de cada patamar.
+    """
+    t = np.asarray(t, dtype=float)
+    m = np.asarray(mascara, dtype=bool)
+    n = len(t)
+    if n == 0:
+        return []
+    patamares = []
+    i = 0
+    while i < n:
+        if m[i]:
+            j = i
+            while j + 1 < n and m[j + 1]:
+                j += 1
+            dur = t[j] - t[i]
+            if dur >= min_dur_s:
+                p = {
+                    "idx_ini": int(i),
+                    "idx_fim": int(j),
+                    "t_ini": float(t[i]),
+                    "t_fim": float(t[j]),
+                    "dur_s": float(dur),
+                }
+                if sinal is not None:
+                    seg = np.asarray(sinal)[i:j + 1]
+                    p["media"] = float(np.mean(seg))
+                    p["desvio"] = float(np.std(seg))
+                patamares.append(p)
+            i = j + 1
+        else:
+            i += 1
+    return patamares
