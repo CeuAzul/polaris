@@ -216,3 +216,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# POLARIS - artefatos de build do instalador (gerados por Inno Setup)
+installer/Output/
