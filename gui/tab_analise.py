@@ -26,6 +26,11 @@ from core.uiuc import (
     buscar_helice_dinamica, carregar_curva_dinamica, comparar_dinamico_com_ensaio,
 )
 from core.report import gerar_relatorio_pdf
+from core.battery_analysis import (
+    resumo_bateria, tem_dados_bateria, mascara_valida, celulas_conectadas,
+    serie_desbalanceamento, colunas_celulas,
+    IMBALANCE_ATENCAO, IMBALANCE_ALTO, V_CEL_BAIXA,
+)
 
 
 class AbaAnalise(ttk.Frame):
@@ -132,7 +137,15 @@ class AbaAnalise(ttk.Frame):
         self.txt_fft = tk.Text(f_fft, height=6, font=("Courier", 9))
         self.txt_fft.pack(fill="x", padx=4, pady=4)
 
-        # Sub-aba 4: UIUC
+        # Sub-aba 4: Bateria
+        f_bat = ttk.Frame(nb); nb.add(f_bat, text="Bateria")
+        self.fig_bat = Figure(figsize=(10, 6), dpi=100, tight_layout=True)
+        self.canvas_bat = FigureCanvasTkAgg(self.fig_bat, master=f_bat)
+        self.canvas_bat.get_tk_widget().pack(fill="both", expand=True)
+        self.txt_bat = tk.Text(f_bat, height=8, font=("Courier", 9))
+        self.txt_bat.pack(fill="x", padx=4, pady=4)
+
+        # Sub-aba 5: UIUC
         f_uiuc = ttk.Frame(nb); nb.add(f_uiuc, text="UIUC")
         uiuc_top = ttk.Frame(f_uiuc); uiuc_top.pack(fill="x", padx=4, pady=4)
         ttk.Button(uiuc_top, text="🔎 Procurar helice no UIUC",
@@ -194,6 +207,7 @@ class AbaAnalise(ttk.Frame):
 
         self._configurar_tabelas()
         self._plot_serie_temporal()
+        self._plot_bateria()
 
     def _detectar_modo_dinamico(self) -> bool:
         if self.df is None:
@@ -275,6 +289,127 @@ class AbaAnalise(ttk.Frame):
                                 transform=ax.get_xaxis_transform())
 
         self.canvas_v.draw_idle()
+
+    # ====================================================
+    # BATERIA (tensao das celulas)
+    # ====================================================
+    def _plot_bateria(self):
+        self.fig_bat.clear()
+        self.txt_bat.delete("1.0", "end")
+
+        if self.df is None or not tem_dados_bateria(self.df):
+            ax = self.fig_bat.add_subplot(111)
+            ax.text(0.5, 0.5,
+                    "Sem dados de bateria neste ensaio.\n"
+                    "(Ensaio antigo ou sem o 2o Arduino conectado)",
+                    ha="center", va="center", transform=ax.transAxes, color="grey")
+            ax.axis("off")
+            self.canvas_bat.draw_idle()
+            self.txt_bat.insert("end", "Sem dados de bateria.\n")
+            return
+
+        mask = mascara_valida(self.df)
+        conectadas = celulas_conectadas(self.df, mask)
+        t = self.df.loc[mask, "t_s"].to_numpy()
+        v_total = (self.df.loc[mask, "v_bat_total"].to_numpy()
+                   if "v_bat_total" in self.df.columns
+                   else self.df.loc[mask, conectadas].to_numpy().sum(axis=1))
+
+        ax1 = self.fig_bat.add_subplot(311)
+        ax2 = self.fig_bat.add_subplot(312, sharex=ax1)
+        ax3 = self.fig_bat.add_subplot(313)
+
+        # --- Painel 1: V_total + celulas ---
+        ax1.plot(t, v_total, "-", color="#7a3aa0", linewidth=1.6, label="V_total")
+        ax1.set_ylabel("V_total (V)"); ax1.grid(True, alpha=0.3)
+        ax1.set_title(f"Bateria {len(conectadas)}S - {Path(self.csv_path).name}")
+        ax1.legend(loc="upper right", fontsize=8)
+
+        ax1b = ax1.twinx()
+        cmap = matplotlib.colormaps["tab10"]
+        for i, c in enumerate(conectadas):
+            ax1b.plot(t, self.df.loc[mask, c].to_numpy(), "-", linewidth=0.7,
+                      color=cmap(i), alpha=0.8, label=c.replace("v_cel", "Cel "))
+        ax1b.set_ylabel("Celula (V)")
+        if conectadas:
+            ax1b.legend(loc="lower right", fontsize=7, ncol=3)
+
+        # regioes estaveis
+        if "estavel" in self.df.columns:
+            est = self.df.loc[mask, "estavel"].astype(bool).to_numpy()
+            ax1.fill_between(t, 0, 1, where=est, alpha=0.12, color="green",
+                             transform=ax1.get_xaxis_transform())
+
+        # --- Painel 2: desbalanceamento ---
+        if len(conectadas) >= 2:
+            dv = serie_desbalanceamento(self.df, mask, conectadas) * 1000.0  # mV
+            ax2.plot(t, dv, "-", color="#c05000", linewidth=1.0)
+            ax2.axhline(IMBALANCE_ATENCAO * 1000, color="#c0a000", linestyle="--",
+                        alpha=0.6, linewidth=0.8, label=f"atencao ({IMBALANCE_ATENCAO*1000:.0f} mV)")
+            ax2.axhline(IMBALANCE_ALTO * 1000, color="#d02020", linestyle="--",
+                        alpha=0.6, linewidth=0.8, label=f"alto ({IMBALANCE_ALTO*1000:.0f} mV)")
+            ax2.set_ylabel("ΔV cel (mV)"); ax2.grid(True, alpha=0.3)
+            ax2.legend(loc="upper left", fontsize=7)
+        else:
+            ax2.text(0.5, 0.5, "Desbalanceamento requer >= 2 celulas",
+                     ha="center", va="center", transform=ax2.transAxes, color="grey")
+        ax2.set_xlabel("Tempo (s)")
+
+        # --- Painel 3: droop V x P_mec ---
+        res = resumo_bateria(self.df)
+        if "p_mec_W" in self.df.columns:
+            p = self.df.loc[mask, "p_mec_W"].to_numpy()
+            sel = p > 0
+            ax3.scatter(p[sel], v_total[sel], s=10, color="#7a3aa0", alpha=0.5)
+            ax3.set_xlabel("P_mec (W)"); ax3.set_ylabel("V_total (V)")
+            ax3.grid(True, alpha=0.3)
+            droop = res.get("droop")
+            if droop:
+                xln = np.array([p[sel].min(), p[sel].max()])
+                yln = droop["slope_v_por_w"] * xln + droop["intercepto_v"]
+                ax3.plot(xln, yln, "--", color="#d02020", linewidth=1.2,
+                         label=f"droop {droop['slope_v_por_w']*1000:+.2f} mV/W "
+                               f"(R²={droop['r2']:.2f})")
+                ax3.legend(loc="upper right", fontsize=8)
+            ax3.set_title("Afundamento sob carga (indicador, sem corrente)", fontsize=9)
+        else:
+            ax3.text(0.5, 0.5, "Sem P_mec para o droop",
+                     ha="center", va="center", transform=ax3.transAxes, color="grey")
+
+        self.canvas_bat.draw_idle()
+        self._resumo_bateria_texto(res)
+
+    def _resumo_bateria_texto(self, res):
+        self.txt_bat.delete("1.0", "end")
+        if not res.get("tem_dados"):
+            self.txt_bat.insert("end", "Sem dados de bateria.\n")
+            return
+        self.txt_bat.insert("end", "=== RESUMO DA BATERIA ===\n")
+        self.txt_bat.insert("end",
+            f"Celulas conectadas : {res['n_celulas']}S\n"
+            f"V inicial / final  : {res['v_ini']:.2f} V  ->  {res['v_fim']:.2f} V\n"
+            f"V max / min        : {res['v_max']:.2f} V  /  {res['v_min']:.2f} V\n"
+            f"Sag (max-min)      : {res['sag']:.2f} V\n")
+        if "imbalance_med" in res:
+            self.txt_bat.insert("end",
+                f"Desbalanceamento   : medio {res['imbalance_med']*1000:.0f} mV, "
+                f"max {res['imbalance_max']*1000:.0f} mV\n"
+                f"Celula mais fraca  : Cel {res['celula_fraca_idx']} "
+                f"(media {res['celula_fraca_media']:.2f} V, "
+                f"menor em {res['celula_fraca_frac_menor']*100:.0f}% do tempo)\n"
+                f"Menor tensao/cel   : {res['min_cel_v']:.2f} V\n")
+        droop = res.get("droop")
+        if droop:
+            self.txt_bat.insert("end",
+                f"Droop V x P_mec    : {droop['slope_v_por_w']*1000:+.2f} mV/W "
+                f"(R²={droop['r2']:.2f}, n={droop['n']}) "
+                f"[indicador, nao e Rint]\n")
+        if res.get("alertas"):
+            self.txt_bat.insert("end", "\nALERTAS:\n")
+            for a in res["alertas"]:
+                self.txt_bat.insert("end", f"  ⚠ {a}\n")
+        else:
+            self.txt_bat.insert("end", "\nSem alertas (pack equilibrado e dentro dos limites).\n")
 
     # ====================================================
     # SWEEP
