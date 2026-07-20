@@ -13,13 +13,13 @@ from tkinter import ttk, messagebox
 import serial.tools.list_ports
 
 from config import (
-    ARQUIVO_CALIBRACAO, ARQUIVO_PITOT_CAL, ARQUIVO_BANCO,
+    ARQUIVO_CALIBRACAO, ARQUIVO_PITOT_CAL, ARQUIVO_BATERIA_CAL, ARQUIVO_BANCO,
     DEFAULT_BAUDRATE, BAUDRATE_BATERIA, PORTA_REMOTA_PADRAO,
 )
 from core.calibration import Calibration
 from core.pitot import carregar_pitot_cal
 from core.serial_reader import SerialReader
-from core.battery_reader import BatteryReader
+from core.battery_reader import BatteryReader, carregar_bateria_cal
 from core import database
 from core.remote_server import RemoteServer
 
@@ -40,6 +40,8 @@ class App:
         self.cal = Calibration.carregar(self.cal_path)
         self.pitot_cal_path = ARQUIVO_PITOT_CAL
         self.pitot_cal = carregar_pitot_cal(self.pitot_cal_path)
+        self.bateria_cal_path = ARQUIVO_BATERIA_CAL
+        self.bateria_cal = carregar_bateria_cal(self.bateria_cal_path)
         self.reader = None
         self.bat_reader = None
         self.remote_server = None

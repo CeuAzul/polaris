@@ -12,14 +12,25 @@ celulas automaticamente e guarda apenas a ULTIMA leitura valida.
 Como a bateria atualiza a 1 Hz e a bancada a ~80 Hz, os consumidores
 usam snapshot() e aplicam hold-last-value em cada amostra da bancada.
 """
+import hashlib
+import json
 import threading
 import time
+from dataclasses import dataclass, field, asdict
+from pathlib import Path
 
 import serial
 
 # Idade maxima (s) para considerar a leitura da bateria "fresca"
 BAT_IDADE_MAX_S = 5.0
 MAX_CELULAS = 6
+
+# Calibracao por celula: faixa esperada do fator de correcao.
+# Fora disso, provavel erro de medicao / divisor / celula trocada.
+FATOR_MIN_ALERTA = 0.80
+FATOR_MAX_ALERTA = 1.20
+# Abaixo desta tensao a celula e considerada nao conectada (nao calibravel)
+V_MIN_CELULA_CAL = 2.5
 
 
 class BatteryReader(threading.Thread):
@@ -104,3 +115,78 @@ class BatteryReader(threading.Thread):
 
     def stop(self):
         self._stop_event.set()
+
+
+# ============================================================
+# CALIBRACAO POR CELULA (fator de correcao em software)
+# ============================================================
+# O firmware ja aplica um FATOR_CORRECAO fixo. Esta camada fica ACIMA
+# dele: um ajuste fino por celula, regulavel sem reflashar o Arduino.
+#   v_corrigida[i] = v_medida[i] * fator[i]
+#   fator[i]       = V_referencia[i] / V_medida[i]   (multimetro)
+#
+# Salva em JSON com cal_id (SHA-1) para rastreabilidade, analogo ao
+# Pitot e as celulas de empuxo/torque.
+@dataclass
+class BateriaCalibracao:
+    """Fatores de correcao por celula. Default 1.0 = sem correcao."""
+    fatores: list = field(default_factory=lambda: [1.0] * MAX_CELULAS)
+    n_celulas: int = 0            # ultimas celulas calibradas (informativo)
+    data_cal: str = ""
+    cal_id: str = ""
+
+    def __post_init__(self):
+        # normaliza tamanho para MAX_CELULAS (defensivo ao carregar JSON antigo)
+        f = list(self.fatores or [])
+        f = (f + [1.0] * MAX_CELULAS)[:MAX_CELULAS]
+        self.fatores = [float(x) if x else 1.0 for x in f]
+
+    def aplicar_celulas(self, v_cels) -> list:
+        """Aplica o fator de cada celula. Retorna lista de MAX_CELULAS."""
+        return [float(v) * self.fatores[i] for i, v in enumerate(v_cels)]
+
+    def gerar_id(self) -> str:
+        content = "|".join(f"{f:.6f}" for f in self.fatores) + f"|{self.data_cal}"
+        self.cal_id = hashlib.sha1(content.encode()).hexdigest()[:10]
+        return self.cal_id
+
+    def tem_correcao(self) -> bool:
+        return any(abs(f - 1.0) > 1e-9 for f in self.fatores)
+
+    def qualidade(self) -> str:
+        if not self.tem_correcao():
+            return "Sem calibracao"
+        if any(f < FATOR_MIN_ALERTA or f > FATOR_MAX_ALERTA for f in self.fatores):
+            return "Atencao"
+        return "OK"
+
+
+def calcular_fator(v_medida: float, v_referencia: float):
+    """fator = V_ref / V_medida. Retorna None se medida invalida (celula
+    ausente ou referencia <= 0)."""
+    if v_medida < V_MIN_CELULA_CAL or v_referencia <= 0:
+        return None
+    return float(v_referencia) / float(v_medida)
+
+
+def fator_fora_faixa(fator: float) -> bool:
+    return fator < FATOR_MIN_ALERTA or fator > FATOR_MAX_ALERTA
+
+
+def carregar_bateria_cal(path) -> BateriaCalibracao:
+    if not Path(path).exists():
+        return BateriaCalibracao()
+    try:
+        with open(path) as f:
+            d = json.load(f)
+        return BateriaCalibracao(**d)
+    except Exception:
+        return BateriaCalibracao()
+
+
+def salvar_bateria_cal(path, cal: BateriaCalibracao):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    cal.gerar_id()
+    with open(path, "w") as f:
+        json.dump(asdict(cal), f, indent=2, ensure_ascii=False)

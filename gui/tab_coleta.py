@@ -538,6 +538,8 @@ class AbaColeta(ttk.Frame):
             bat_n_cel = self.app.bat_reader.n_celulas if bat_conectada else 0
             f.write(f"# bateria_monitor: {'sim' if bat_conectada else 'nao'}\n")
             f.write(f"# bateria_n_celulas: {bat_n_cel}\n")
+            f.write(f"# bateria_cal_id: {self.app.bateria_cal.cal_id or 'NA'}\n")
+            f.write(f"# bateria_fatores: {self.app.bateria_cal.fatores}\n")
             for t_e, lab in self.eventos_marcados:
                 f.write(f"# evento: t={t_e:.3f} {lab}\n")
             f.write("#\n")
@@ -590,6 +592,8 @@ class AbaColeta(ttk.Frame):
                     "n_celulas": (self.app.bat_reader.n_celulas
                                   if self.app.bat_reader and self.app.bat_reader.connected
                                   else 0),
+                    "cal_id": self.app.bateria_cal.cal_id,
+                    "fatores": self.app.bateria_cal.fatores,
                 },
                 "eventos": self.eventos_marcados,
                 "n_amostras": len(self.dados_coleta),
@@ -627,12 +631,17 @@ class AbaColeta(ttk.Frame):
         if snap is None:
             return  # conectado mas nenhuma linha valida ainda
 
-        v_cels, v_total, idade = snap
+        v_cels_raw, _v_total_arduino, idade = snap
+        n_cel = br.n_celulas
+        # aplica a calibracao por celula (fator de correcao em software)
+        v_cels = self.app.bateria_cal.aplicar_celulas(v_cels_raw)
+        # total corrigido = soma das celulas conectadas ja corrigidas
+        v_total = sum(v_cels[:n_cel])
+
         self._bat_v_cels = v_cels
         self._bat_v_total = v_total
         self._bat_fresca = idade < BAT_IDADE_MAX_S
 
-        n_cel = br.n_celulas
         if self._bat_fresca:
             self.var_vbat.set(f"{v_total:5.2f} V")
             self.var_vcels.set("  ".join(f"{v:.2f}" for v in v_cels[:n_cel]))

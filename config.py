@@ -31,6 +31,7 @@ RELATORIOS_DIR.mkdir(exist_ok=True)
 # Arquivos de configuracao
 ARQUIVO_CALIBRACAO = CONFIG_DIR / "calibracao.json"
 ARQUIVO_PITOT_CAL  = CONFIG_DIR / "pitot_calibracao.json"
+ARQUIVO_BATERIA_CAL = CONFIG_DIR / "bateria_calibracao.json"
 ARQUIVO_PERFIS = CONFIG_DIR / "perfis.json"        # perfis de motor/helice
 ARQUIVO_BANCO = CONFIG_DIR / "ensaios.db"
 

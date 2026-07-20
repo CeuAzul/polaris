@@ -18,6 +18,10 @@ from core.pitot import (
     MS4525_RANGE_PA_DEFAULT, calcular_tara, salvar_pitot_cal,
     status_legivel,
 )
+from core.battery_reader import (
+    MAX_CELULAS, BAT_IDADE_MAX_S, FATOR_MIN_ALERTA, FATOR_MAX_ALERTA,
+    calcular_fator, fator_fora_faixa, salvar_bateria_cal,
+)
 
 
 # Presets de sensores (range_pa, pa_per_count)
@@ -46,6 +50,10 @@ class AbaCalibracao(ttk.Frame):
         # Sub-aba 2: Pitot
         f_pit = ttk.Frame(nb); nb.add(f_pit, text="Pitot (MS4525DO)")
         self._build_pitot(f_pit)
+
+        # Sub-aba 3: Bateria (fator de correcao por celula)
+        f_bat = ttk.Frame(nb); nb.add(f_bat, text="Bateria (celulas)")
+        self._build_bateria(f_bat)
 
     # ============================================================
     # CELULAS (codigo original com 7-tupla na fila)
@@ -408,3 +416,192 @@ class AbaCalibracao(ttk.Frame):
             text=f"raw_med = {raw_med:8.1f}   q = {q:+7.2f} Pa   status = {status_legivel(st_atual)}",
             foreground="green" if st_atual == PITOT_OK else "orange",
         )
+
+    # ============================================================
+    # BATERIA (fator de correcao por celula)
+    # ============================================================
+    def _build_bateria(self, parent):
+        # estado da calibracao em andamento
+        self._bat_medidas = [0.0] * MAX_CELULAS   # ultima leitura ao vivo (raw Arduino)
+        self._bat_n_cel = 0
+        self._bat_fatores_pendentes = None        # fatores calculados, ainda nao salvos
+
+        ttk.Label(parent, justify="left", foreground="#444", text=(
+            "Ajusta a tensao lida de cada celula para um valor de referencia (multimetro).\n"
+            "Procedimento: conecte o Arduino da bateria (aba Coleta) com a bateria/fonte ligada,\n"
+            "clique 'Ler ao vivo', meça cada celula com multimetro, digite o valor real e\n"
+            "'Calcular fatores'. Fator = V_referencia / V_medida, aplicado sobre a leitura."
+        )).pack(anchor="w", padx=8, pady=(8, 4))
+
+        gb = ttk.LabelFrame(parent, text="Fatores por celula")
+        gb.pack(fill="x", padx=8, pady=4)
+
+        # cabecalho da tabela
+        ttk.Label(gb, text="Celula", width=8).grid(row=0, column=0, padx=4, pady=2)
+        ttk.Label(gb, text="V medida (ao vivo)", width=18).grid(row=0, column=1, padx=4)
+        ttk.Label(gb, text="V referencia", width=14).grid(row=0, column=2, padx=4)
+        ttk.Label(gb, text="Fator resultante", width=16).grid(row=0, column=3, padx=4)
+
+        self.bat_var_medida = []
+        self.bat_entry_ref = []
+        self.bat_var_fator = []
+        cal = self.app.bateria_cal
+        for i in range(MAX_CELULAS):
+            ttk.Label(gb, text=f"Cel {i+1}").grid(row=i + 1, column=0, padx=4, pady=1)
+
+            v_med = tk.StringVar(value="—")
+            ttk.Label(gb, textvariable=v_med, font=("Courier", 10),
+                      foreground="#7a3aa0").grid(row=i + 1, column=1, padx=4)
+            self.bat_var_medida.append(v_med)
+
+            e_ref = ttk.Entry(gb, width=12)
+            e_ref.grid(row=i + 1, column=2, padx=4)
+            self.bat_entry_ref.append(e_ref)
+
+            v_fat = tk.StringVar(value=f"{cal.fatores[i]:.4f}")
+            ttk.Label(gb, textvariable=v_fat, font=("Courier", 10)).grid(
+                row=i + 1, column=3, padx=4)
+            self.bat_var_fator.append(v_fat)
+
+        botoes = ttk.Frame(parent); botoes.pack(fill="x", padx=8, pady=6)
+        ttk.Button(botoes, text="↻ Ler ao vivo",
+                   command=self._ler_bateria_live).pack(side="left", padx=4)
+        ttk.Button(botoes, text="🧮 Calcular fatores",
+                   command=self._calcular_fatores_bateria).pack(side="left", padx=4)
+        ttk.Button(botoes, text="💾 Salvar",
+                   command=self._salvar_bateria).pack(side="left", padx=4)
+        ttk.Button(botoes, text="↺ Resetar (fatores = 1.0)",
+                   command=self._resetar_bateria).pack(side="left", padx=4)
+
+        self.lbl_bat_status = ttk.Label(parent, text="", foreground="grey")
+        self.lbl_bat_status.pack(anchor="w", padx=8)
+
+        self.txt_bat_info = tk.Text(parent, height=9, font=("Courier", 9))
+        self.txt_bat_info.pack(fill="x", padx=8, pady=4)
+        self._refresh_info_bateria()
+
+    def _ler_bateria_live(self):
+        br = self.app.bat_reader
+        if not (br and br.connected):
+            messagebox.showwarning("Bateria",
+                                   "Conecte o Arduino da bateria na aba Coleta primeiro.")
+            return
+        snap = br.snapshot()
+        if snap is None:
+            messagebox.showwarning("Bateria",
+                                   "Sem dados ainda. Aguarde alguns segundos apos conectar.")
+            return
+        v_cels, _v_total, idade = snap
+        if idade > BAT_IDADE_MAX_S:
+            messagebox.showwarning("Bateria",
+                                   f"Leitura antiga ({idade:.0f}s). Verifique a conexao.")
+            return
+
+        self._bat_n_cel = br.n_celulas
+        self._bat_medidas = list(v_cels)
+        for i in range(MAX_CELULAS):
+            if i < br.n_celulas:
+                self.bat_var_medida[i].set(f"{v_cels[i]:.3f} V")
+            else:
+                self.bat_var_medida[i].set("—")
+        self.lbl_bat_status.config(
+            text=f"Leitura ao vivo: {br.n_celulas} celulas (idade {idade:.1f}s). "
+                 f"Digite a referencia e calcule.",
+            foreground="green")
+
+    def _calcular_fatores_bateria(self):
+        if self._bat_n_cel == 0:
+            messagebox.showwarning("Bateria", "Clique em 'Ler ao vivo' primeiro.")
+            return
+
+        # parte dos fatores atuais; so mexe nas celulas com referencia digitada
+        novos = list(self.app.bateria_cal.fatores)
+        fora, calculou = [], False
+        for i in range(self._bat_n_cel):
+            ref_str = self.bat_entry_ref[i].get().strip().replace(",", ".")
+            if not ref_str:
+                continue  # sem referencia -> mantem o fator existente da celula
+            try:
+                v_ref = float(ref_str)
+            except ValueError:
+                messagebox.showerror("Bateria", f"Cel {i+1}: referencia invalida.")
+                return
+            fator = calcular_fator(self._bat_medidas[i], v_ref)
+            if fator is None:
+                messagebox.showwarning(
+                    "Bateria",
+                    f"Cel {i+1}: medida {self._bat_medidas[i]:.2f}V muito baixa "
+                    f"(sem celula?) ou referencia <= 0. Ignorada.")
+                continue
+            novos[i] = fator
+            calculou = True
+            if fator_fora_faixa(fator):
+                fora.append((i + 1, fator))
+
+        if not calculou:
+            messagebox.showwarning("Bateria", "Nenhuma referencia valida digitada.")
+            return
+
+        self._bat_fatores_pendentes = novos
+        for i in range(MAX_CELULAS):
+            self.bat_var_fator[i].set(f"{novos[i]:.4f}")
+
+        if fora:
+            txt = "\n".join(f"  Cel {c}: fator {f:.3f}" for c, f in fora)
+            messagebox.showwarning(
+                "Fatores fora do esperado",
+                f"Estes fatores ficaram fora de ±20% de 1.0:\n{txt}\n\n"
+                "Pode indicar celula/divisor errado ou erro de digitacao.\n"
+                "Revise a medicao. Vai pedir confirmacao ao salvar.")
+        self.lbl_bat_status.config(
+            text="Fatores calculados. Clique 'Salvar' para aplicar.",
+            foreground="#5050b0")
+
+    def _salvar_bateria(self):
+        fatores = (self._bat_fatores_pendentes
+                   if self._bat_fatores_pendentes is not None
+                   else list(self.app.bateria_cal.fatores))
+        fora = [(i + 1, f) for i, f in enumerate(fatores) if fator_fora_faixa(f)]
+        if fora:
+            txt = "\n".join(f"  Cel {c}: {f:.3f}" for c, f in fora)
+            if not messagebox.askyesno(
+                    "Confirmar",
+                    f"Fatores fora de ±20% de 1.0:\n{txt}\n\nSalvar mesmo assim?"):
+                return
+
+        self.app.bateria_cal.fatores = list(fatores)
+        if self._bat_n_cel:
+            self.app.bateria_cal.n_celulas = self._bat_n_cel
+        self.app.bateria_cal.data_cal = datetime.now().isoformat(timespec="seconds")
+        salvar_bateria_cal(self.app.bateria_cal_path, self.app.bateria_cal)
+        self._bat_fatores_pendentes = None
+        self._refresh_info_bateria()
+        messagebox.showinfo(
+            "Bateria",
+            f"Calibracao salva em\n{self.app.bateria_cal_path}\n\n"
+            f"cal_id: {self.app.bateria_cal.cal_id}")
+
+    def _resetar_bateria(self):
+        if not messagebox.askyesno("Resetar",
+                                   "Voltar todos os fatores para 1.0 (sem correcao)?"):
+            return
+        self.app.bateria_cal.fatores = [1.0] * MAX_CELULAS
+        self.app.bateria_cal.data_cal = datetime.now().isoformat(timespec="seconds")
+        salvar_bateria_cal(self.app.bateria_cal_path, self.app.bateria_cal)
+        self._bat_fatores_pendentes = None
+        for i in range(MAX_CELULAS):
+            self.bat_var_fator[i].set("1.0000")
+            self.bat_entry_ref[i].delete(0, tk.END)
+        self._refresh_info_bateria()
+
+    def _refresh_info_bateria(self):
+        c = self.app.bateria_cal
+        self.txt_bat_info.delete("1.0", "end")
+        self.txt_bat_info.insert("end", "=== CALIBRACAO DA BATERIA ===\n")
+        for i in range(MAX_CELULAS):
+            self.txt_bat_info.insert("end", f"  fator cel{i+1} : {c.fatores[i]:.4f}\n")
+        self.txt_bat_info.insert("end",
+            f"n_celulas    : {c.n_celulas}\n"
+            f"data_cal     : {c.data_cal or 'NA'}\n"
+            f"qualidade    : {c.qualidade()}\n"
+            f"cal_id       : {c.cal_id or 'NA'}\n")
