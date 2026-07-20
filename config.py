@@ -1,4 +1,6 @@
 """Configuracoes globais."""
+import os
+import sys
 from pathlib import Path
 
 # Constantes fisicas
@@ -18,15 +20,37 @@ ID_FIRMWARE = ID_FIRMWARE_V3
 
 # Caminhos
 ROOT = Path(__file__).parent
-CONFIG_DIR = ROOT / "config_local"
-ENSAIOS_DIR = ROOT / "ensaios"
-UIUC_DIR = ROOT / "uiuc_data"
-RELATORIOS_DIR = ROOT / "relatorios"
 
-CONFIG_DIR.mkdir(exist_ok=True)
-ENSAIOS_DIR.mkdir(exist_ok=True)
-UIUC_DIR.mkdir(exist_ok=True)
-RELATORIOS_DIR.mkdir(exist_ok=True)
+
+def _data_root() -> Path:
+    """Onde ficam os DADOS do usuario (config, ensaios, relatorios).
+
+    No modo empacotado/instalado, os dados sao separados do CODIGO
+    (que e substituido a cada auto-update) para nunca perder ensaios
+    ou calibracao. No modo dev (rodando do repo), mantem tudo no repo,
+    preservando o fluxo de trabalho atual da equipe.
+
+    Pode ser forcado por POLARIS_DATA_DIR.
+    """
+    env = os.environ.get("POLARIS_DATA_DIR")
+    if env:
+        return Path(env)
+    if getattr(sys, "frozen", False):
+        base = os.environ.get("LOCALAPPDATA") or str(Path.home())
+        return Path(base) / "POLARIS"
+    return ROOT
+
+
+DATA_ROOT = _data_root()
+# Dados do usuario (persistem entre atualizacoes)
+CONFIG_DIR = DATA_ROOT / "config_local"
+ENSAIOS_DIR = DATA_ROOT / "ensaios"
+RELATORIOS_DIR = DATA_ROOT / "relatorios"
+# Referencia que acompanha o codigo (read-only, atualizada junto no update)
+UIUC_DIR = ROOT / "uiuc_data"
+
+for _d in (CONFIG_DIR, ENSAIOS_DIR, RELATORIOS_DIR, UIUC_DIR):
+    _d.mkdir(parents=True, exist_ok=True)
 
 # Arquivos de configuracao
 ARQUIVO_CALIBRACAO = CONFIG_DIR / "calibracao.json"

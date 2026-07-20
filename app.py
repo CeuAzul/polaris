@@ -12,6 +12,11 @@ from tkinter import ttk, messagebox
 
 import serial.tools.list_ports
 
+try:
+    from version import __version__ as VERSAO
+except Exception:
+    VERSAO = "?"
+
 from config import (
     ARQUIVO_CALIBRACAO, ARQUIVO_PITOT_CAL, ARQUIVO_BATERIA_CAL, ARQUIVO_BANCO,
     DEFAULT_BAUDRATE, BAUDRATE_BATERIA, PORTA_REMOTA_PADRAO,
@@ -258,7 +263,7 @@ class App:
     def _sobre(self):
         messagebox.showinfo("Sobre",
             "POLARIS - Bancada de Empuxo - Ceu Azul Aerodesign\n"
-            "Versao 3.0 (suporte a Pitot MS4525DO)\n\n"
+            f"Versao {VERSAO}\n\n"
             "Funcoes:\n"
             "  • Coleta com RPM via fio do ESC\n"
             "  • Pitot opcional (MS4525DO) para empuxo dinamico\n"
